@@ -1,85 +1,81 @@
-# Credit Card Fraud Detection: M.Tech ML Project
+# Credit Card Fraud Detection (M.Tech ML project)
 
-End-to-end machine learning study plus a Streamlit app, on the **Credit Card Fraud Detection
-Dataset 2023** (Kaggle, ~550,000 anonymised transactions from European cardholders; columns
-`id, V1-V28, Amount, Class`).
+Machine-learning study + Streamlit web app on the **Credit Card Fraud Detection Dataset 2023**
+(Kaggle, ~550,000 anonymised European cardholder transactions, columns `id, V1-V28, Amount, Class`).
 
-> Dataset: search Kaggle for *"Credit Card Fraud Detection Dataset 2023"* (author: Nidula Elgiriyewithana),
-> download `creditcard_2023.csv` and place it in `data/`.
+Dataset: https://www.kaggle.com/datasets/nelgiriyewithana/credit-card-fraud-detection-dataset-2023
+(download `creditcard_2023.csv` and put it in the `data/` folder).
 
-## Quick start
+## Files (one job per file)
+
+| File | Job | Syllabus unit |
+|---|---|---|
+| `config.py` | all settings (paths, seed, fraud rate...) | |
+| `data_prep.py` | load, clean, re-balance to ~2% fraud, stratified train/test split | I |
+| `eda.py` | statistics, correlation, outliers (IQR + Isolation Forest), charts | II |
+| `models.py` | preprocessing pipeline, 6 classifiers, 6 regression models, metric functions | III, IV |
+| `explain.py` | permutation importance, per-transaction explanation, cost/threshold analysis | extra |
+| `plots.py` | every chart (used by `eda.py`, `train.py` and the app) | |
+| `train.py` | runs everything, cross-validation + tuning, saves `artifacts/` and `reports/` | I-IV |
+| `app.py` | Streamlit web app | |
+| `make_demo_data.py` | fake data with the same columns, for testing only | |
+
+## 1. Install (once)
 
 ```bash
-python -m venv .venv && source .venv/bin/activate      # Windows: .venv\Scripts\activate
+python -m venv .venv
+.venv\Scripts\activate          # Windows      (Mac/Linux: source .venv/bin/activate)
 pip install -r requirements.txt
-
-python train.py --data creditcard_2023.csv             # or data/creditcard_2023.csv
-streamlit run app.py
 ```
 
-If the real CSV lives in `data/`, use that path; if it is in the project root, the app will auto-detect it.
-No dataset yet? `python make_demo_data.py` creates a synthetic file with the same schema for a smoke test.
-**Use the real file for your reported results.**
+## 2. Run
 
-Useful options: `--n_legit 30000` (rows sampled), `--fraud_rate 0.02` (share of fraud after re-balancing),
-`--seed 42`. Lower `--n_legit` if the SVM is slow on your machine.
+**Important:** run every command from inside this project folder.
 
-## Why we re-balance the data
+```bash
+python train.py --data data/creditcard_2023.csv     # real dataset, about 2-5 minutes
+streamlit run app.py                                 # opens http://localhost:8501
+```
 
-The 2023 file is (as far as I know) close to 50/50 fraud vs legitimate, which is unrealistic; real card
-fraud is well under 1%. `train.py` therefore keeps a sample of legitimate rows and only enough fraud rows to
-reach `--fraud_rate` (default 2%). This restores the imbalance problem your syllabus asks you to handle, and
-makes accuracy a misleading metric, so models are compared on **recall, precision, F1 and PR-AUC**.
-State this design decision explicitly in your report.
+Want to test without downloading anything?  `python train.py --demo` (synthetic data; the app shows a
+warning banner so you never mistake it for real results).
 
-## How the project maps to your syllabus
+**This zip already contains a quick demo run in `artifacts/`, so `streamlit run app.py` works immediately.
+Those numbers are from synthetic data: run `train.py` on the real dataset before you use any result.**
 
-| Unit | Topic | Where |
-|---|---|---|
-| I | Pandas loading, duplicates, missing values, scaling, train-test split | `common.load_data`, `common.make_prep`, stratified split in `train.main` |
-| II | EDA, visualisation, correlation | `train.run_eda`, app **EDA** page |
-| II | Outlier detection | IQR rule + Isolation Forest in `run_eda` |
-| II | Feature selection / transformation | `SelectKBest(f_classif)`, `log(1+Amount)`, scaling |
-| II | Imbalance handling | `imbalance_study`: none / class weights / under-sampling / SMOTE |
-| II | Preprocessing pipelines | `Pipeline` + `ColumnTransformer` (no leakage; CV runs the whole pipeline) |
-| III | Simple, multiple, polynomial regression | `regression_study` |
-| III | Ridge, Lasso, Elastic Net | `RidgeCV`, `LassoCV`, `ElasticNetCV` (alpha chosen by CV) |
-| III | MAE, MSE, RMSE, R² | Regression page (train *and* test R² to show overfitting) |
-| IV | LR, KNN, Decision Tree, Random Forest, SVM, Naive Bayes | `classifiers()` |
-| IV | Confusion matrix, accuracy, precision, recall, F1, ROC-AUC | Classification page (+ PR-AUC) |
+You can also run the steps one by one: `python data_prep.py --data ...`, then `python eda.py`, then `python train.py`.
+All charts for your report are saved in `reports/`.
 
-Two regression targets are used: **Amount** (the anonymised features probably carry little signal, so expect
-R² near 0; report it honestly and discuss why) and the **0/1 fraud label as a risk score** (a linear
-probability model, useful for Lasso feature selection).
+## 3. Deploy on Streamlit Community Cloud (free)
 
-## Deploy on Streamlit Community Cloud
+1. Run `train.py` on the real data first (this refreshes `artifacts/`).
+2. Create a GitHub repository and upload this folder **including `artifacts/`**
+   (`data/*.csv` is ignored on purpose; the app does not need the big file).
+3. Go to https://share.streamlit.io, sign in with GitHub, click **New app**, choose the repository,
+   branch `main`, main file `app.py`, and press **Deploy**.
+4. If the saved model cannot be loaded on the server (different scikit-learn version), the app
+   retrains the same model automatically from `artifacts/train.csv`; nothing breaks.
 
-1. Run `train.py` locally (needs the real CSV). It creates `artifacts/` (model, metrics, small EDA sample).
-2. Push the project to GitHub **including `artifacts/`** but not `data/` (already in `.gitignore`).
-   The raw CSV is not needed at runtime.
-3. On share.streamlit.io choose the repo, main file `app.py`, and deploy.
-4. Version match: the model is pickled with your scikit-learn version. Run `pip freeze | grep -i -E
-   "scikit-learn|numpy|pandas|joblib"` after training and pin those versions in `requirements.txt`.
-5. If `best_model.joblib` exceeds GitHub's 100 MB limit, lower `n_estimators` / `max_depth` in `train.py`.
+## Troubleshooting
 
-## App pages
+| Problem | Fix |
+|---|---|
+| `Dataset not found` | put `creditcard_2023.csv` in `data/`, or use `--data path/to/file.csv`, or `--demo` |
+| `ModuleNotFoundError` | activate the virtual environment and run `pip install -r requirements.txt` |
+| `streamlit` is not recognised | use `python -m streamlit run app.py` |
+| `No results found` in the app | run `python train.py ...` first (or use the `artifacts/` shipped in the zip) |
+| training is slow | lower `N_LEGIT` in `config.py` (for example 10000) |
+| app says "SYNTHETIC demo data" | you are viewing the demo run: train on the real CSV |
 
-Overview, EDA, Classification (metrics table, ROC curves, confusion matrices, imbalance comparison, feature
-importance), Regression, and **Live prediction** (manual input, sample transaction, batch CSV upload, adjustable
-decision threshold, and a cost-sensitive threshold analysis where you set the cost of a missed fraud vs a
-false alarm).
+## Why the data is re-balanced
 
-## Suggested report outline
+The 2023 file is (as far as I know) close to 50% fraud, which is unrealistic. `data_prep.py` keeps
+20,000 legitimate rows and only enough fraud rows for a 2% fraud rate. That brings back the real difficulty
+(rare fraud), so accuracy is misleading and models are compared on recall, precision, F1 and PR-AUC.
+State this choice in your report.
 
-1. Introduction & problem statement  2. Dataset description & re-balancing rationale  3. Data preparation
-4. EDA & feature engineering  5. Regression study  6. Classification study & imbalance handling
-7. Model selection (CV PR-AUC) and threshold/cost analysis  8. Deployment  9. Limitations & future work
+## Limitations (mention them in your viva)
 
-## Limitations to mention (examiners like honesty)
-
-- Features V1-V28 are anonymised PCA components, so they cannot be interpreted in business terms.
-- The Kaggle 2023 data may be partly synthetic or cleaned; very high scores can be too optimistic for real
-  card traffic. Mention that results are benchmark results, not production guarantees.
-- No time dimension, so no concept-drift or temporal validation. Future work: time-aware split, XGBoost/LightGBM,
-  SHAP explanations, autoencoder anomaly detection.
-- The app is an academic demo, not a production fraud system.
+- V1-V28 are anonymised, so features cannot be interpreted in business terms.
+- The 2023 dataset may be partly synthetic; very high scores may not carry over to real card traffic.
+- No time dimension, so no drift or time-based validation. This is an academic demo, not a production system.
