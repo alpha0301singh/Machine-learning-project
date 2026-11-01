@@ -13,10 +13,11 @@ Dataset 2023** (Kaggle, ~550,000 anonymised transactions from European cardholde
 python -m venv .venv && source .venv/bin/activate      # Windows: .venv\Scripts\activate
 pip install -r requirements.txt
 
-python train.py --data data/creditcard_2023.csv        # ~5-10 min; writes ./artifacts
+python train.py --data creditcard_2023.csv             # or data/creditcard_2023.csv
 streamlit run app.py
 ```
 
+If the real CSV lives in `data/`, use that path; if it is in the project root, the app will auto-detect it.
 No dataset yet? `python make_demo_data.py` creates a synthetic file with the same schema for a smoke test.
 **Use the real file for your reported results.**
 

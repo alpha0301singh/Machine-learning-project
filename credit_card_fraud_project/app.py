@@ -1,6 +1,8 @@
 """Streamlit frontend.   streamlit run app.py
 Reads only ./artifacts (produced by train.py) - the big raw CSV is NOT needed to deploy."""
 import json
+import subprocess
+import sys
 from pathlib import Path
 
 import joblib
@@ -31,10 +33,54 @@ def load_model():
     return joblib.load(ART / "best_model.joblib")
 
 
-if not (ART / "metrics.json").exists():
-    st.error("No artifacts found. Run `python train.py --data data/creditcard_2023.csv` first, "
-             "then commit the `artifacts/` folder.")
+def find_dataset():
+    candidates = [
+        ART.parent / "data" / "creditcard_2023.csv",
+        ART.parent / "creditcard_2023.csv",
+        ART.parent / "data" / "creditcard_2023_demo.csv",
+        ART.parent / "creditcard_2023_demo.csv",
+    ]
+    for candidate in candidates:
+        if candidate.exists():
+            return candidate
+    data_dir = ART.parent / "data"
+    if data_dir.exists():
+        csvs = sorted(data_dir.glob("*.csv"))
+        if csvs:
+            return csvs[0]
+    return None
+
+
+def ensure_artifacts():
+    if (ART / "metrics.json").exists():
+        return
+
+    data_file = find_dataset()
+    if data_file is not None:
+        with st.spinner("Training the model artifacts from the detected dataset..."):
+            proc = subprocess.run(
+                [sys.executable, "train.py", "--data", str(data_file)],
+                cwd=str(ART.parent),
+                capture_output=True,
+                text=True,
+            )
+        if proc.returncode == 0 and (ART / "metrics.json").exists():
+            return
+        st.error("Training failed while generating the model artifacts.")
+        if proc.stdout:
+            st.code(proc.stdout[-1200:])
+        if proc.stderr:
+            st.code(proc.stderr[-1200:])
+        st.stop()
+
+    st.error(
+        "No artifacts found. Put the CSV in `data/creditcard_2023.csv` or in the project root, "
+        "then rerun the app or run: `python train.py --data creditcard_2023.csv`"
+    )
     st.stop()
+
+
+ensure_artifacts()
 
 M, EDA = load_json("metrics.json"), load_json("eda.json")
 CLS, CFG = M["classification"], M["config"]
