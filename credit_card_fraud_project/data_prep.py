@@ -1,8 +1,4 @@
-"""STEP 1 - Load, clean, re-balance and split the data (Unit I).
 
-Run on its own:   python data_prep.py --data data/creditcard_2023.csv
-It writes artifacts/train.csv and artifacts/test.csv.
-"""
 import argparse
 
 import numpy as np
@@ -13,7 +9,7 @@ from config import (ARTIFACTS, DATA_FILE, FEATURES, FRAUD_RATE, N_LEGIT, SEED, T
 
 
 def load_data(path):
-    """Read the CSV and check it has the columns we expect."""
+    
     try:
         df = pd.read_csv(path)
     except FileNotFoundError:
