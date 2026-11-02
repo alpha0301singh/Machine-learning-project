@@ -1,85 +1,241 @@
 
-import argparse
+"""Data loading, cleaning, balancing and splitting."""
 
-import numpy as np
 import pandas as pd
+import numpy as np
 from sklearn.model_selection import train_test_split
 
-from config import (ARTIFACTS, DATA_FILE, FEATURES, FRAUD_RATE, N_LEGIT, SEED, TARGET, TEST_SIZE)
+from config import (
+    DATA_FILE,
+    ARTIFACTS,
+    FEATURES,
+    TARGET,
+    N_LEGIT,
+    FRAUD_RATE,
+    SEED,
+    TEST_SIZE
+)
 
 
-def load_data(path):
-    
+# STEP 1: LOAD DATA
+
+def load_data(path=DATA_FILE):
+
     try:
-        df = pd.read_csv(path)
+        data = pd.read_csv(path)
     except FileNotFoundError:
-        raise SystemExit(f"\nDataset not found: {path}\n"
-                         "Download creditcard_2023.csv (link in README.md) and put it in the data/ folder,\n"
-                         "or test with fake data:  python make_demo_data.py\n")
-    missing = [c for c in FEATURES + [TARGET] if c not in df.columns]
-    if missing:
-        raise SystemExit(f"The CSV is missing columns: {missing}. Is it the 2023 dataset?")
-    return df
+        raise FileNotFoundError(f"Dataset not found: {path}")
+
+    print("Dataset loaded successfully")
+    print("Total rows:", len(data))
+
+    return data
 
 
-def clean_data(df):
-    """Clean the data and return (clean_df, report). Missing values are NOT filled here:
-    filling must use training data only, so it happens inside the model pipeline."""
-    report = {"rows_before": len(df)}
-    df = df[[c for c in FEATURES + [TARGET] if c in df.columns]].copy()       # drops 'id' etc.
-    for c in df.columns:
-        df[c] = pd.to_numeric(df[c], errors="coerce")                         # text -> NaN
-    df = df.replace([np.inf, -np.inf], np.nan)
-    report["negative_amounts"] = int((df["Amount"] < 0).sum())
-    df.loc[df["Amount"] < 0, "Amount"] = np.nan                               # impossible value
-    bad = ~df[TARGET].isin([0, 1])
-    report["invalid_label_rows"] = int(bad.sum())
-    df = df[~bad].copy()
-    df[TARGET] = df[TARGET].astype(int)
-    report["duplicates_removed"] = int(df.duplicated().sum())
-    df = df.drop_duplicates().reset_index(drop=True)
-    report["rows_after"] = len(df)
-    report["missing_values_left"] = int(df.isna().sum().sum())
-    report["raw_fraud_share"] = round(float(df[TARGET].mean()), 4)
-    return df, report
+# STEP 2: CLEAN DATA
+
+def clean_data(data):
+
+    original_rows = len(data)
+
+    # Check required columns
+    required_columns = FEATURES + [TARGET]
+    missing_columns = [
+        column for column in required_columns
+        if column not in data.columns
+    ]
+
+    if missing_columns:
+        raise ValueError(
+            f"Missing required columns: {missing_columns}"
+        )
+
+    # Keep only required columns
+    data = data[required_columns].copy()
+
+    # Convert columns to numeric values
+    for column in required_columns:
+        data[column] = pd.to_numeric(
+            data[column],
+            errors="coerce"
+        )
+
+    # Replace infinite values with missing values
+    data = data.replace([np.inf, -np.inf], np.nan)
+
+    # Treat negative transaction amounts as missing
+    data.loc[data["Amount"] < 0, "Amount"] = np.nan
+
+    # Keep only valid fraud labels
+    data = data[data[TARGET].isin([0, 1])].copy()
+
+    # Convert fraud labels to integers
+    data[TARGET] = data[TARGET].astype(int)
+
+    # Remove duplicate rows
+    data = data.drop_duplicates()
+
+    data = data.reset_index(drop=True)
+
+    # Cleaning information
+    cleaning_info = {
+        "original_rows": int(original_rows),
+        "remaining_rows": int(len(data)),
+        "removed_rows": int(original_rows - len(data)),
+        "missing_values": int(data.isnull().sum().sum())
+    }
+
+    print("\nData cleaning completed")
+    print("Remaining rows:", len(data))
+    print("Missing values:", cleaning_info["missing_values"])
+
+    return data, cleaning_info
 
 
-def make_study_set(df, n_legit=N_LEGIT, fraud_rate=FRAUD_RATE):
-    """The 2023 file is ~50% fraud, which is unrealistic. Keep n_legit normal rows and only
-    enough fraud rows to reach `fraud_rate`, so the class-imbalance problem is real again."""
-    legit, fraud = df[df[TARGET] == 0], df[df[TARGET] == 1]
-    n_legit = min(n_legit, len(legit))
-    n_fraud = min(int(round(n_legit * fraud_rate / (1 - fraud_rate))), len(fraud))
-    study = pd.concat([legit.sample(n_legit, random_state=SEED), fraud.sample(n_fraud, random_state=SEED)])
-    return study.sample(frac=1, random_state=SEED).reset_index(drop=True)
+# STEP 3: HANDLE CLASS IMBALANCE
+
+def balance_data(data, n_legit=N_LEGIT, fraud_rate=FRAUD_RATE):
+
+    if n_legit <= 0:
+        raise ValueError("n_legit must be greater than zero")
+
+    if not 0 < fraud_rate < 1:
+        raise ValueError("fraud_rate must be between 0 and 1")
+
+    # Separate legitimate and fraud transactions
+    normal = data[data[TARGET] == 0]
+    fraud = data[data[TARGET] == 1]
+
+    if len(normal) == 0 or len(fraud) == 0:
+        raise ValueError(
+            "Dataset must contain both legitimate and fraud transactions"
+        )
+
+    # Select legitimate transactions
+    normal = normal.sample(
+        n=min(n_legit, len(normal)),
+        random_state=SEED
+    )
+
+    # Calculate required fraud transactions
+    fraud_count = int(
+        len(normal) * fraud_rate / (1 - fraud_rate)
+    )
+
+    # Select available fraud transactions
+    fraud = fraud.sample(
+        n=min(fraud_count, len(fraud)),
+        random_state=SEED
+    )
+
+    # Combine both classes
+    balanced_data = pd.concat(
+        [normal, fraud],
+        ignore_index=True
+    )
+
+    # Shuffle transactions
+    balanced_data = balanced_data.sample(
+        frac=1,
+        random_state=SEED
+    ).reset_index(drop=True)
+
+    print("\nClass balancing completed")
+    print("Legitimate transactions:", len(normal))
+    print("Fraud transactions:", len(fraud))
+    print(
+        "Actual fraud percentage:",
+        round(balanced_data[TARGET].mean() * 100, 2),
+        "%"
+    )
+
+    return balanced_data
 
 
-def split_data(df):
-    """80/20 split that keeps the same fraud share in both parts (stratify)."""
-    train, test = train_test_split(df, test_size=TEST_SIZE, stratify=df[TARGET], random_state=SEED)
-    return train.reset_index(drop=True), test.reset_index(drop=True)
+# STEP 4: SPLIT DATA
 
+def split_data(data):
+
+    X = data[FEATURES]
+    y = data[TARGET]
+
+    X_train, X_test, y_train, y_test = train_test_split(
+        X,
+        y,
+        test_size=TEST_SIZE,
+        random_state=SEED,
+        stratify=y
+    )
+
+    # Combine features and target into DataFrames
+    train = X_train.copy()
+    train[TARGET] = y_train
+
+    test = X_test.copy()
+    test[TARGET] = y_test
+
+    print("\nTraining and testing data created")
+    print("Training rows:", len(train))
+    print("Testing rows:", len(test))
+
+    return train, test
+
+
+# STEP 5: COMPLETE DATA PREPARATION
 
 def prepare(path=DATA_FILE, n_legit=N_LEGIT, fraud_rate=FRAUD_RATE):
-    """Full step 1. Saves train/test CSVs and returns (train, test, info)."""
-    raw = load_data(path)
-    clean, report = clean_data(raw)
-    study = make_study_set(clean, n_legit, fraud_rate)
-    train, test = split_data(study)
-    ARTIFACTS.mkdir(exist_ok=True)
-    train.round(4).to_csv(ARTIFACTS / "train.csv", index=False)
-    test.round(4).to_csv(ARTIFACTS / "test.csv", index=False)
-    info = {"cleaning": report, "raw_rows": len(raw), "study_rows": len(study),
-            "fraud_rate": float(study[TARGET].mean()), "train_rows": len(train), "test_rows": len(test)}
-    print(f"Data ready: {len(raw):,} raw rows -> {len(study):,} study rows "
-          f"({info['fraud_rate']:.2%} fraud) | train {len(train):,} / test {len(test):,}")
+
+    # Load dataset
+    raw_data = load_data(path)
+
+    raw_rows = len(raw_data)
+
+    # Clean dataset
+    cleaned_data, cleaning_info = clean_data(raw_data)
+
+    # Balance dataset
+    balanced_data = balance_data(
+        cleaned_data,
+        n_legit,
+        fraud_rate
+    )
+
+    # Split dataset
+    train, test = split_data(balanced_data)
+
+    # Create artifacts folder
+    ARTIFACTS.mkdir(parents=True, exist_ok=True)
+
+    # Save training and testing datasets
+    train.to_csv(
+        ARTIFACTS / "train.csv",
+        index=False
+    )
+
+    test.to_csv(
+        ARTIFACTS / "test.csv",
+        index=False
+    )
+
+    # Information used by train.py and app.py
+    info = {
+        "raw_rows": int(raw_rows),
+        "study_rows": int(len(balanced_data)),
+        "fraud_rate": float(balanced_data[TARGET].mean()),
+        "test_rows": int(len(test)),
+        "cleaning": cleaning_info
+    }
+
+    print("\nData preparation completed successfully")
+    print("Training fraud percentage:",
+          round(train[TARGET].mean() * 100, 2), "%")
+    print("Testing fraud percentage:",
+          round(test[TARGET].mean() * 100, 2), "%")
+
     return train, test, info
 
 
+# RUN THIS FILE DIRECTLY
+
 if __name__ == "__main__":
-    ap = argparse.ArgumentParser()
-    ap.add_argument("--data", default=str(DATA_FILE))
-    ap.add_argument("--n_legit", type=int, default=N_LEGIT)
-    ap.add_argument("--fraud_rate", type=float, default=FRAUD_RATE)
-    a = ap.parse_args()
-    prepare(a.data, a.n_legit, a.fraud_rate)
+    prepare()

@@ -1,112 +1,424 @@
-"""STEP 3 - All the models (Units III and IV) and the metric functions.
 
-This file only DEFINES things; train.py runs them. Every classifier sits in the same
-pipeline: impute -> log/scale -> select features -> model, so the comparison is fair and
-nothing from the test set leaks into training.
-"""
 import numpy as np
+
 from sklearn.compose import ColumnTransformer
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.feature_selection import SelectKBest, f_classif
 from sklearn.impute import SimpleImputer
-from sklearn.linear_model import (ElasticNetCV, LassoCV, LinearRegression, LogisticRegression, RidgeCV)
-from sklearn.metrics import (accuracy_score, average_precision_score, confusion_matrix, f1_score,
-                             mean_absolute_error, mean_squared_error, precision_recall_curve,
-                             precision_score, r2_score, recall_score, roc_auc_score, roc_curve)
+
+from sklearn.linear_model import (
+    LogisticRegression,
+    LinearRegression,
+    RidgeCV,
+    LassoCV,
+    ElasticNetCV
+)
+
+from sklearn.metrics import (
+    accuracy_score,
+    precision_score,
+    recall_score,
+    f1_score,
+    roc_auc_score,
+    average_precision_score,
+    confusion_matrix,
+    roc_curve,
+    precision_recall_curve,
+    mean_absolute_error,
+    mean_squared_error,
+    r2_score
+)
+
 from sklearn.naive_bayes import GaussianNB
 from sklearn.neighbors import KNeighborsClassifier
 from sklearn.pipeline import Pipeline
-from sklearn.preprocessing import FunctionTransformer, PolynomialFeatures, StandardScaler
+from sklearn.preprocessing import (
+    StandardScaler,
+    FunctionTransformer,
+    PolynomialFeatures
+)
 from sklearn.svm import SVC
 from sklearn.tree import DecisionTreeClassifier
 
 from config import SEED, SELECT_K, V_COLS
 
 
-# ------------------------------------------------------------------ preprocessing
-def build_preprocessor():
-    """Median-fill missing values, log-transform Amount (it is very skewed), scale everything."""
-    amount = Pipeline([("imp", SimpleImputer(strategy="median")),
-                       ("log", FunctionTransformer(np.log1p, feature_names_out="one-to-one")),
-                       ("sc", StandardScaler())])
-    v = Pipeline([("imp", SimpleImputer(strategy="median")), ("sc", StandardScaler())])
-    return ColumnTransformer([("amt", amount, ["Amount"]), ("v", v, V_COLS)])
+# Step 1: Prepare Data
 
+def build_preprocessor():
+
+    # Handle missing values and scale Amount
+    amount_pipeline = Pipeline([
+
+        ("imputer", SimpleImputer(strategy="median")),
+
+        ("log", FunctionTransformer(np.log1p)),
+
+        ("scaler", StandardScaler())
+
+    ])
+
+    # Handle missing values and scale V1 to V28
+    feature_pipeline = Pipeline([
+
+        ("imputer", SimpleImputer(strategy="median")),
+
+        ("scaler", StandardScaler())
+
+    ])
+
+    # Apply different preprocessing to different columns
+    preprocessor = ColumnTransformer([
+
+        ("amount", amount_pipeline, ["Amount"]),
+
+        ("features", feature_pipeline, V_COLS)
+
+    ])
+
+    return preprocessor
+
+
+# Step 2: Create Machine Learning Pipeline
 
 def build_pipeline(model, k=SELECT_K):
-    return Pipeline([("prep", build_preprocessor()), ("select", SelectKBest(f_classif, k=k)), ("clf", model)])
+
+    pipeline = Pipeline([
+
+        ("preprocessing", build_preprocessor()),
+
+        ("feature_selection", SelectKBest(score_func=f_classif, k=k)),
+
+        ("model", model)
+
+    ])
+
+    return pipeline
 
 
-# ------------------------------------------------------------ classification (Unit IV)
+# Step 3: Create Classification Models
+
 def get_classifiers():
-    """class_weight='balanced' = 'a missed fraud counts more than a false alarm'."""
-    return {
-        "Logistic Regression": LogisticRegression(max_iter=2000, class_weight="balanced"),
-        "KNN": KNeighborsClassifier(n_neighbors=7, n_jobs=-1),
-        "Decision Tree": DecisionTreeClassifier(max_depth=8, min_samples_leaf=5,
-                                                class_weight="balanced", random_state=SEED),
-        "Random Forest": RandomForestClassifier(n_estimators=150, max_depth=12, min_samples_leaf=2,
-                                                class_weight="balanced_subsample", n_jobs=-1,
-                                                random_state=SEED),
-        "SVM (RBF)": SVC(kernel="rbf", class_weight="balanced", random_state=SEED),
-        "Naive Bayes": GaussianNB(),
+
+    models = {
+
+        "Logistic Regression": LogisticRegression(
+            max_iter=2000,
+            class_weight="balanced"
+        ),
+
+        "KNN": KNeighborsClassifier(
+            n_neighbors=7,
+            n_jobs=-1
+        ),
+
+        "Decision Tree": DecisionTreeClassifier(
+            max_depth=8,
+            min_samples_leaf=5,
+            class_weight="balanced",
+            random_state=SEED
+        ),
+
+        "Random Forest": RandomForestClassifier(
+            n_estimators=150,
+            max_depth=12,
+            min_samples_leaf=2,
+            class_weight="balanced_subsample",
+            n_jobs=-1,
+            random_state=SEED
+        ),
+
+        "SVM (RBF)": SVC(
+            kernel="rbf",
+            class_weight="balanced",
+            random_state=SEED
+        ),
+
+        "Naive Bayes": GaussianNB()
+
     }
 
+    return models
 
-RF_GRID = {"clf__max_depth": [8, 12], "clf__min_samples_leaf": [1, 3], "select__k": [SELECT_K, "all"]}
 
+# Step 4: Random Forest Parameter Settings
+
+RF_GRID = {
+
+    "model__max_depth": [8, 12],
+
+    "model__min_samples_leaf": [1, 3],
+
+    "feature_selection__k": [SELECT_K, "all"]
+
+}
+
+
+# Step 5: Create Random Forest Model for Tuning
 
 def tuned_rf_pipeline():
-    """Un-tuned Random Forest pipeline: the starting point of the grid search."""
-    return build_pipeline(RandomForestClassifier(n_estimators=150, class_weight="balanced_subsample",
-                                                 n_jobs=-1, random_state=SEED))
 
+    model = RandomForestClassifier(
+
+        n_estimators=150,
+
+        class_weight="balanced_subsample",
+
+        n_jobs=-1,
+
+        random_state=SEED
+
+    )
+
+    return build_pipeline(model)
+
+
+# Step 6: Rebuild Best Model
 
 def rebuild_best(name, params=None):
-    """Re-create the winning (unfitted) pipeline from its name + tuned parameters.
-    The app uses this to retrain if the saved model file cannot be loaded."""
+
+    # Rebuild tuned Random Forest
     if name.endswith("(tuned)"):
-        return tuned_rf_pipeline().set_params(**(params or {}))
-    return build_pipeline(get_classifiers()[name])
+
+        model = tuned_rf_pipeline()
+
+        model.set_params(**(params or {}))
+
+        return model
+
+    # Rebuild another classification model
+    models = get_classifiers()
+
+    return build_pipeline(models[name])
 
 
-# ----------------------------------------------------------------- regression (Unit III)
+# Step 7: Create Regression Models
+
 def get_regressors(features, best_single):
-    scaled = lambda m: Pipeline([("sc", StandardScaler()), ("m", m)])  # noqa: E731
-    return [
-        (f"Simple Linear [{best_single}]", scaled(LinearRegression()), [best_single]),
-        ("Multiple Linear", scaled(LinearRegression()), features),
-        ("Polynomial (deg 2)", Pipeline([("poly", PolynomialFeatures(2, include_bias=False)),
-                                         ("sc", StandardScaler()), ("m", LinearRegression())]), features),
-        ("Ridge (CV alpha)", scaled(RidgeCV(alphas=np.logspace(-2, 3, 20))), features),
-        ("Lasso (CV alpha)", scaled(LassoCV(cv=3, n_alphas=30, max_iter=5000, random_state=SEED)), features),
-        ("Elastic Net (CV)", scaled(ElasticNetCV(l1_ratio=[.2, .5, .8], cv=3, n_alphas=30,
-                                                 max_iter=5000, random_state=SEED)), features),
-    ]
+
+    models = []
+
+    # Simple Linear Regression
+    simple_model = Pipeline([
+
+        ("scaler", StandardScaler()),
+
+        ("model", LinearRegression())
+
+    ])
+
+    models.append((
+        f"Simple Linear [{best_single}]",
+        simple_model,
+        [best_single]
+    ))
+
+    # Multiple Linear Regression
+    multiple_model = Pipeline([
+
+        ("scaler", StandardScaler()),
+
+        ("model", LinearRegression())
+
+    ])
+
+    models.append((
+        "Multiple Linear",
+        multiple_model,
+        features
+    ))
+
+    # Polynomial Regression
+    polynomial_model = Pipeline([
+
+        ("polynomial", PolynomialFeatures(
+            degree=2,
+            include_bias=False
+        )),
+
+        ("scaler", StandardScaler()),
+
+        ("model", LinearRegression())
+
+    ])
+
+    models.append((
+        "Polynomial (deg 2)",
+        polynomial_model,
+        features
+    ))
+
+    # Ridge Regression
+    ridge_model = Pipeline([
+
+        ("scaler", StandardScaler()),
+
+        ("model", RidgeCV(
+            alphas=np.logspace(-2, 3, 20)
+        ))
+
+    ])
+
+    models.append((
+        "Ridge (CV alpha)",
+        ridge_model,
+        features
+    ))
+
+    # Lasso Regression
+    lasso_model = Pipeline([
+
+        ("scaler", StandardScaler()),
+
+        ("model", LassoCV(
+            cv=3,
+            n_alphas=30,
+            max_iter=5000,
+            random_state=SEED
+        ))
+
+    ])
+
+    models.append((
+        "Lasso (CV alpha)",
+        lasso_model,
+        features
+    ))
+
+    # Elastic Net Regression
+    elastic_model = Pipeline([
+
+        ("scaler", StandardScaler()),
+
+        ("model", ElasticNetCV(
+            l1_ratio=[0.2, 0.5, 0.8],
+            cv=3,
+            n_alphas=30,
+            max_iter=5000,
+            random_state=SEED
+        ))
+
+    ])
+
+    models.append((
+        "Elastic Net (CV)",
+        elastic_model,
+        features
+    ))
+
+    return models
 
 
-# ------------------------------------------------------------------------- metrics
+# Step 8: Get Model Predictions
+
 def get_scores(model, X):
-    return model.predict_proba(X)[:, 1] if hasattr(model, "predict_proba") else model.decision_function(X)
+
+    # Get fraud probabilities if available
+    if hasattr(model, "predict_proba"):
+
+        scores = model.predict_proba(X)[:, 1]
+
+    else:
+
+        # Get decision scores for models without predict_proba
+        scores = model.decision_function(X)
+
+    return scores
 
 
-def _thin(a, b, n=200):
-    idx = np.linspace(0, len(a) - 1, min(n, len(a))).astype(int)
-    return a[idx].round(4).tolist(), b[idx].round(4).tolist()
+# Step 9: Reduce Graph Data Points
+
+def reduce_points(x_values, y_values, n=200):
+
+    # Select a maximum of 200 points
+    indexes = np.linspace(
+        0,
+        len(x_values) - 1,
+        min(n, len(x_values))
+    ).astype(int)
+
+    x_values = x_values[indexes].round(4).tolist()
+
+    y_values = y_values[indexes].round(4).tolist()
+
+    return x_values, y_values
 
 
-def classification_metrics(y, pred, score):
-    fpr, tpr, _ = roc_curve(y, score)
-    prec, rec, _ = precision_recall_curve(y, score)
-    return {"accuracy": accuracy_score(y, pred), "precision": precision_score(y, pred, zero_division=0),
-            "recall": recall_score(y, pred, zero_division=0), "f1": f1_score(y, pred, zero_division=0),
-            "roc_auc": roc_auc_score(y, score), "pr_auc": average_precision_score(y, score),
-            "confusion": confusion_matrix(y, pred).tolist(),          # [[TN, FP], [FN, TP]]
-            "roc": dict(zip(("fpr", "tpr"), _thin(fpr, tpr))),
-            "pr": dict(zip(("precision", "recall"), _thin(prec, rec)))}
+# Step 10: Calculate Classification Performance
+
+def classification_metrics(y, predictions, scores):
+
+    # Calculate ROC curve
+    fpr, tpr, _ = roc_curve(y, scores)
+
+    # Calculate Precision-Recall curve
+    precision, recall, _ = precision_recall_curve(y, scores)
+
+    # Calculate confusion matrix
+    matrix = confusion_matrix(y, predictions)
+
+    results = {
+
+        "accuracy": accuracy_score(y, predictions),
+
+        "precision": precision_score(
+            y, predictions, zero_division=0
+        ),
+
+        "recall": recall_score(
+            y, predictions, zero_division=0
+        ),
+
+        "f1": f1_score(
+            y, predictions, zero_division=0
+        ),
+
+        "roc_auc": roc_auc_score(y, scores),
+
+        "pr_auc": average_precision_score(y, scores),
+
+        "confusion": matrix.tolist(),
+
+        "roc": {
+
+            "fpr": reduce_points(fpr, tpr)[0],
+
+            "tpr": reduce_points(fpr, tpr)[1]
+
+        },
+
+        "pr": {
+
+            "precision": reduce_points(precision, recall)[0],
+
+            "recall": reduce_points(precision, recall)[1]
+
+        }
+
+    }
+
+    return results
 
 
-def regression_metrics(y_test, pred, y_train, pred_train):
-    mse = mean_squared_error(y_test, pred)
-    return {"MAE": mean_absolute_error(y_test, pred), "MSE": mse, "RMSE": float(np.sqrt(mse)),
-            "R2": r2_score(y_test, pred), "R2_train": r2_score(y_train, pred_train)}
+# Step 11: Calculate Regression Performance
+
+def regression_metrics(y_test, predictions, y_train, train_predictions):
+
+    # Calculate Mean Squared Error
+    mse = mean_squared_error(y_test, predictions)
+
+    results = {
+
+        "MAE": mean_absolute_error(y_test, predictions),
+
+        "MSE": mse,
+
+        "RMSE": float(np.sqrt(mse)),
+
+        "R2": r2_score(y_test, predictions),
+
+        "R2_train": r2_score(y_train, train_predictions)
+
+    }
+
+    return results

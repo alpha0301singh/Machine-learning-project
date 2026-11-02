@@ -1,179 +1,538 @@
-"""STEP 4 - Run the whole study and save everything the Streamlit app needs.
 
-    python train.py --data data/creditcard_2023.csv      # real dataset
-    python train.py --demo                                # synthetic data, quick test
+"""Main training file for Credit Card Fraud Detection.
 
-What happens: data_prep (clean, re-balance, split) -> eda -> imbalance study -> regression
--> classification (cross-validation + tuning) -> explainability -> save to artifacts/.
+Run:
+    python train.py
+    python train.py --data data/creditcard_2023.csv
+    python train.py --demo
 """
+
 import argparse
 import json
-import platform
 import time
-import warnings
+import platform
 from datetime import datetime
-from pathlib import Path
 
 import joblib
 import numpy as np
 import pandas as pd
 import sklearn
+
 from sklearn.linear_model import LogisticRegression
-from sklearn.metrics import average_precision_score, f1_score, precision_score, recall_score
-from sklearn.model_selection import GridSearchCV, StratifiedKFold, cross_val_score
+from sklearn.metrics import (
+    precision_score,
+    recall_score,
+    f1_score,
+    average_precision_score
+)
+from sklearn.model_selection import (
+    StratifiedKFold,
+    cross_val_score,
+    GridSearchCV
+)
 from sklearn.pipeline import Pipeline
 
 import eda
 import explain
-import models
+import model as models
 import plots
-from config import (ARTIFACTS, CV_FOLDS, DATA_FILE, FEATURES, FRAUD_RATE, N_LEGIT, REPORTS, SEED,
-                    TARGET, V_COLS)
+
+from config import (
+    ARTIFACTS,
+    REPORTS,
+    DATA_FILE,
+    FEATURES,
+    TARGET,
+    V_COLS,
+    SEED,
+    N_LEGIT,
+    FRAUD_RATE,
+    CV_FOLDS
+)
+
 from data_prep import prepare
 
-warnings.filterwarnings("ignore")
+
+# ------------------------- SAVE CHARTS -------------------------
+
+def save_chart(fig, filename):
+    REPORTS.mkdir(parents=True, exist_ok=True)
+    fig.savefig(
+        REPORTS / filename,
+        dpi=150,
+        bbox_inches="tight"
+    )
 
 
-def save_fig(fig, name):
-    REPORTS.mkdir(exist_ok=True)
-    fig.savefig(REPORTS / name, dpi=150, bbox_inches="tight")
+# ------------------------- IMBALANCE STUDY -------------------------
 
+def imbalance_study(X_train, y_train, X_test, y_test):
 
-# ------------------------------------------------------------------ Unit II: imbalance
-def imbalance_study(Xtr, ytr, Xte, yte):
-    """Same Logistic Regression, three ways of treating the rare fraud class."""
-    def run(class_weight, X, y):
-        pipe = Pipeline([("prep", models.build_preprocessor()),
-                         ("clf", LogisticRegression(max_iter=2000, class_weight=class_weight))]).fit(X, y)
-        s, p = pipe.predict_proba(Xte)[:, 1], pipe.predict(Xte)
-        return {"precision": precision_score(yte, p, zero_division=0), "recall": recall_score(yte, p),
-                "f1": f1_score(yte, p), "pr_auc": average_precision_score(yte, s)}
+    def train_and_evaluate(class_weight, X, y):
 
-    fraud_idx = ytr[ytr == 1].index                                  # under-sampling: all fraud,
-    legit_idx = ytr[ytr == 0].sample(n=min(3 * len(fraud_idx), int((ytr == 0).sum())), random_state=SEED).index
-    keep = fraud_idx.union(legit_idx)                                # only 3 legit rows per fraud row
-    return {"No handling": run(None, Xtr, ytr),
-            "Class weights": run("balanced", Xtr, ytr),
-            "Under-sampling (1:3)": run(None, Xtr.loc[keep], ytr.loc[keep])}
+        pipeline = Pipeline([
+            ("prep", models.build_preprocessor()),
+            ("clf", LogisticRegression(
+                max_iter=2000,
+                class_weight=class_weight
+            ))
+        ])
 
+        pipeline.fit(X, y)
 
-# -------------------------------------------------------------------- Unit III: regression
-def regression_study(train, test):
-    out = {}
-    for target in ("Amount", "Class"):
-        feats = V_COLS if target == "Amount" else FEATURES           # never predict Amount from itself
-        Xa, Xb = train[feats], test[feats]
-        Xa, Xb = Xa.fillna(Xa.median()), Xb.fillna(Xa.median())
-        ya, yb = train[target], test[target]
-        best_single = Xa.corrwith(ya).abs().idxmax()
-        res = {}
-        for name, pipe, cols in models.get_regressors(feats, best_single):
-            pipe.fit(Xa[cols], ya)
-            m = models.regression_metrics(yb, pipe.predict(Xb[cols]), ya, pipe.predict(Xa[cols]))
-            est = pipe.named_steps["m"]
-            if hasattr(est, "alpha_"):
-                m["alpha"] = float(est.alpha_)
-            if hasattr(est, "coef_"):
-                m["nonzero_coefs"] = int((np.abs(est.coef_) > 1e-8).sum())
-            res[name] = m
-        out[target] = res
-        save_fig(plots.regression_comparison(pd.DataFrame(res).T, target), f"regression_{target}.png")
-    return out
+        predictions = pipeline.predict(X_test)
+        scores = pipeline.predict_proba(X_test)[:, 1]
 
+        return {
+            "precision": precision_score(
+                y_test, predictions, zero_division=0
+            ),
+            "recall": recall_score(y_test, predictions, zero_division=0),
+            "f1": f1_score(y_test, predictions, zero_division=0),
+            "pr_auc": average_precision_score(y_test, scores)
+        }
 
-# ----------------------------------------------------------------- Unit IV: classification
-def classification_study(Xtr, ytr, Xte, yte):
-    cv = StratifiedKFold(CV_FOLDS, shuffle=True, random_state=SEED)
-    results, fitted = {}, {}
-    for name, model in models.get_classifiers().items():
-        t0 = time.time()
-        pipe = models.build_pipeline(model)
-        cv_score = cross_val_score(pipe, Xtr, ytr, cv=cv, scoring="average_precision").mean()
-        pipe.fit(Xtr, ytr)
-        m = models.classification_metrics(yte, pipe.predict(Xte), models.get_scores(pipe, Xte))
-        m["cv_pr_auc"] = float(cv_score)
-        results[name], fitted[name] = m, pipe
-        print(f"  {name:20s} cv PR-AUC={cv_score:.3f} | test PR-AUC={m['pr_auc']:.3f} "
-              f"F1={m['f1']:.3f} recall={m['recall']:.3f}  ({time.time() - t0:.0f}s)")
+    # Select all fraud transactions
+    fraud_rows = y_train[y_train == 1].index
 
-    print("  tuning Random Forest ...")
-    grid = GridSearchCV(models.tuned_rf_pipeline(), models.RF_GRID, scoring="average_precision", cv=cv).fit(Xtr, ytr)
-    best_rf = grid.best_estimator_
-    m = models.classification_metrics(yte, best_rf.predict(Xte), models.get_scores(best_rf, Xte))
-    m["cv_pr_auc"] = float(grid.best_score_)
-    results["Random Forest (tuned)"], fitted["Random Forest (tuned)"] = m, best_rf
-    tuning = {"best_params": grid.best_params_, "best_cv_pr_auc": float(grid.best_score_)}
+    # Select three legitimate transactions for every fraud transaction
+    legitimate_rows = y_train[y_train == 0].sample(
+        n=min(3 * len(fraud_rows), (y_train == 0).sum()),
+        random_state=SEED
+    ).index
 
-    # Pick the winner by CROSS-VALIDATED PR-AUC (never by test score). Only models that give
-    # probabilities can be deployed, because the app needs a probability for its threshold.
-    cands = {n: r["cv_pr_auc"] for n, r in results.items() if hasattr(fitted[n], "predict_proba")}
-    best = max(cands, key=cands.get)
-    return results, fitted, tuning, best
+    selected_rows = fraud_rows.union(legitimate_rows)
 
+    results = {
+        "No handling": train_and_evaluate(
+            None, X_train, y_train
+        ),
 
-# ---------------------------------------------------------------------------------- main
-def main():
-    ap = argparse.ArgumentParser()
-    ap.add_argument("--data", default=str(DATA_FILE), help="path to creditcard_2023.csv")
-    ap.add_argument("--n_legit", type=int, default=N_LEGIT)
-    ap.add_argument("--fraud_rate", type=float, default=FRAUD_RATE)
-    ap.add_argument("--demo", action="store_true", help="use synthetic data (NOT for your report)")
-    a = ap.parse_args()
-    t0 = time.time()
+        "Class weights": train_and_evaluate(
+            "balanced", X_train, y_train
+        ),
 
-    if a.demo:
-        from make_demo_data import make
-        a.data = str(make())
-    source = "synthetic demo data" if a.demo else Path(a.data).name
-
-    print("\n[1/6] Data preparation")
-    train, test, info = prepare(a.data, a.n_legit, a.fraud_rate)
-    Xtr, ytr, Xte, yte = train[FEATURES], train[TARGET], test[FEATURES], test[TARGET]
-
-    print("\n[2/6] Exploratory data analysis")
-    eda_res = eda.compute_eda(train)
-    eda.print_summary(eda_res)
-    eda.save_eda_charts(train, eda_res)
-
-    print("\n[3/6] Imbalance study")
-    imbalance = imbalance_study(Xtr, ytr, Xte, yte)
-    print(pd.DataFrame(imbalance).T.round(3).to_string())
-    save_fig(plots.imbalance_comparison(pd.DataFrame(imbalance).T), "imbalance.png")
-
-    print("\n[4/6] Regression")
-    regression = regression_study(train, test)
-    for t, res in regression.items():
-        print(f"  target {t}: best test R2 = {max(r['R2'] for r in res.values()):.3f}")
-
-    print("\n[5/6] Classification")
-    results, fitted, tuning, best = classification_study(Xtr, ytr, Xte, yte)
-    print(f"  -> deployed model: {best}")
-    table = pd.DataFrame(results).T.astype({c: float for c in ["precision", "recall", "f1", "pr_auc"]})
-    save_fig(plots.model_comparison(table), "model_comparison.png")
-    save_fig(plots.roc_curves(results), "roc_curves.png")
-    save_fig(plots.pr_curves(results), "pr_curves.png")
-    save_fig(plots.confusion(results[best]["confusion"], f"Confusion matrix: {best}"), "confusion_best.png")
-
-    print("\n[6/6] Explainability + saving")
-    model = fitted[best]
-    perm = explain.permutation_importances(model, Xte, yte)
-    save_fig(plots.permutation_importance(perm), "permutation_importance.png")
-    ARTIFACTS.mkdir(exist_ok=True)
-    joblib.dump(model, ARTIFACTS / "best_model.joblib", compress=3)
-    pd.DataFrame({"y_true": yte.values, "score": model.predict_proba(Xte)[:, 1]}).round(5) \
-        .to_csv(ARTIFACTS / "test_scores.csv", index=False)
-    payload = {
-        "meta": {"data_source": source, "trained_at": datetime.now().isoformat(timespec="seconds"),
-                 "sklearn_version": sklearn.__version__, "python_version": platform.python_version(),
-                 "seed": SEED, "cv_folds": CV_FOLDS, **{k: v for k, v in info.items() if k != "cleaning"}},
-        "cleaning": info["cleaning"], "eda": eda_res, "imbalance": imbalance, "regression": regression,
-        "classification": results, "tuning": tuning, "best_model": best, "permutation": perm,
-        "feature_stats": {"median": Xtr.median().to_dict(), "q01": Xtr.quantile(.01).to_dict(),
-                          "q99": Xtr.quantile(.99).to_dict()},
+        "Under-sampling (1:3)": train_and_evaluate(
+            None,
+            X_train.loc[selected_rows],
+            y_train.loc[selected_rows]
+        )
     }
-    (ARTIFACTS / "results.json").write_text(json.dumps(
-        payload, indent=1, default=lambda o: o.item() if hasattr(o, "item") else str(o)))
-    print(f"\nDone in {time.time() - t0:.0f}s. Start the app with:  streamlit run app.py")
+
+    return results
+
+
+# ------------------------- REGRESSION STUDY -------------------------
+
+def regression_study(train, test):
+
+    results = {}
+
+    # Predict Amount and Class separately
+    for target in ["Amount", "Class"]:
+
+        if target == "Amount":
+            features = V_COLS
+        else:
+            features = FEATURES
+
+        X_train = train[features].copy()
+        X_test = test[features].copy()
+
+        y_train = train[target]
+        y_test = test[target]
+
+        # Fill missing values using training medians
+        medians = X_train.median()
+
+        X_train = X_train.fillna(medians)
+        X_test = X_test.fillna(medians)
+
+        # Find the strongest single feature
+        best_feature = X_train.corrwith(y_train).abs().idxmax()
+
+        target_results = {}
+
+        regression_models = models.get_regressors(
+            features,
+            best_feature
+        )
+
+        for name, pipeline, selected_features in regression_models:
+
+            pipeline.fit(
+                X_train[selected_features],
+                y_train
+            )
+
+            predictions = pipeline.predict(
+                X_test[selected_features]
+            )
+
+            train_predictions = pipeline.predict(
+                X_train[selected_features]
+            )
+
+            metrics = models.regression_metrics(
+                y_test,
+                predictions,
+                y_train,
+                train_predictions
+            )
+
+            # Read the final estimator in the pipeline
+            estimator = pipeline.steps[-1][1]
+
+            if hasattr(estimator, "alpha_"):
+                metrics["alpha"] = float(estimator.alpha_)
+
+            if hasattr(estimator, "coef_"):
+                metrics["nonzero_coefs"] = int(
+                    (np.abs(estimator.coef_) > 1e-8).sum()
+                )
+
+            target_results[name] = metrics
+
+        results[target] = target_results
+
+        # Save regression chart
+        chart_data = pd.DataFrame(target_results).T
+
+        save_chart(
+            plots.regression_comparison(chart_data, target),
+            f"regression_{target}.png"
+        )
+
+    return results
+
+
+# ------------------------- CLASSIFICATION STUDY -------------------------
+
+def classification_study(X_train, y_train, X_test, y_test):
+
+    cv = StratifiedKFold(
+        n_splits=CV_FOLDS,
+        shuffle=True,
+        random_state=SEED
+    )
+
+    results = {}
+    trained_models = {}
+
+    # Train and compare all classifiers
+    for name, classifier in models.get_classifiers().items():
+
+        start_time = time.time()
+
+        pipeline = models.build_pipeline(classifier)
+
+        # Cross-validation using PR-AUC
+        cv_score = cross_val_score(
+            pipeline,
+            X_train,
+            y_train,
+            cv=cv,
+            scoring="average_precision"
+        ).mean()
+
+        # Train on complete training data
+        pipeline.fit(X_train, y_train)
+
+        predictions = pipeline.predict(X_test)
+        scores = models.get_scores(pipeline, X_test)
+
+        metrics = models.classification_metrics(
+            y_test,
+            predictions,
+            scores
+        )
+
+        metrics["cv_pr_auc"] = float(cv_score)
+
+        results[name] = metrics
+        trained_models[name] = pipeline
+
+        print(
+            f"{name}: "
+            f"CV PR-AUC = {cv_score:.3f}, "
+            f"Test PR-AUC = {metrics['pr_auc']:.3f}, "
+            f"Time = {time.time() - start_time:.1f}s"
+        )
+
+    # Tune Random Forest
+    print("\nTuning Random Forest...")
+
+    grid_search = GridSearchCV(
+        models.tuned_rf_pipeline(),
+        models.RF_GRID,
+        scoring="average_precision",
+        cv=cv,
+        n_jobs=-1
+    )
+
+    grid_search.fit(X_train, y_train)
+
+    best_rf = grid_search.best_estimator_
+
+    predictions = best_rf.predict(X_test)
+    scores = models.get_scores(best_rf, X_test)
+
+    rf_metrics = models.classification_metrics(
+        y_test,
+        predictions,
+        scores
+    )
+
+    rf_metrics["cv_pr_auc"] = float(grid_search.best_score_)
+
+    results["Random Forest (tuned)"] = rf_metrics
+    trained_models["Random Forest (tuned)"] = best_rf
+
+    tuning_results = {
+        "best_params": grid_search.best_params_,
+        "best_cv_pr_auc": float(grid_search.best_score_)
+    }
+
+    # Select the best model using cross-validation, not test performance
+    eligible_models = {
+        name: metrics["cv_pr_auc"]
+        for name, metrics in results.items()
+        if hasattr(trained_models[name], "predict_proba")
+    }
+
+    best_model_name = max(
+        eligible_models,
+        key=eligible_models.get
+    )
+
+    return results, trained_models, tuning_results, best_model_name
+
+
+# ------------------------- MAIN FUNCTION -------------------------
+
+def main():
+
+    parser = argparse.ArgumentParser(
+        description="Credit Card Fraud Detection Training"
+    )
+
+    parser.add_argument(
+        "--data",
+        default=str(DATA_FILE),
+        help="Path to the dataset"
+    )
+
+    parser.add_argument(
+        "--n_legit",
+        type=int,
+        default=N_LEGIT
+    )
+
+    parser.add_argument(
+        "--fraud_rate",
+        type=float,
+        default=FRAUD_RATE
+    )
+
+    parser.add_argument(
+        "--demo",
+        action="store_true",
+        help="Use synthetic demo data"
+    )
+
+    args = parser.parse_args()
+
+    start_time = time.time()
+
+    ARTIFACTS.mkdir(parents=True, exist_ok=True)
+    REPORTS.mkdir(parents=True, exist_ok=True)
+
+    # Use synthetic data if demo mode is selected
+    if args.demo:
+        from make_demo_data import make
+        args.data = str(make())
+        data_source = "synthetic demo data"
+    else:
+        data_source = str(args.data)
+
+    # STEP 1: DATA PREPARATION
+    print("\nSTEP 1: Data Preparation")
+
+    train, test, info = prepare(
+        args.data,
+        args.n_legit,
+        args.fraud_rate
+    )
+
+    X_train = train[FEATURES]
+    y_train = train[TARGET]
+
+    X_test = test[FEATURES]
+    y_test = test[TARGET]
+
+    # STEP 2: EXPLORATORY DATA ANALYSIS
+    print("\nSTEP 2: Exploratory Data Analysis")
+
+    eda_results = eda.compute_eda(train)
+
+    eda.print_summary(eda_results)
+    eda.save_eda_charts(train, eda_results)
+
+    # STEP 3: IMBALANCE STUDY
+    print("\nSTEP 3: Imbalance Study")
+
+    imbalance_results = imbalance_study(
+        X_train,
+        y_train,
+        X_test,
+        y_test
+    )
+
+    imbalance_table = pd.DataFrame(imbalance_results).T
+
+    print(imbalance_table.round(3))
+
+    save_chart(
+        plots.imbalance_comparison(imbalance_table),
+        "imbalance.png"
+    )
+
+    # STEP 4: REGRESSION
+    print("\nSTEP 4: Regression Study")
+
+    regression_results = regression_study(train, test)
+
+    for target, values in regression_results.items():
+        best_r2 = max(
+            result["R2"] for result in values.values()
+        )
+
+        print(f"{target}: Best test R2 = {best_r2:.3f}")
+
+    # STEP 5: CLASSIFICATION
+    print("\nSTEP 5: Classification Study")
+
+    classification_results, trained_models, tuning_results, best_name = (
+        classification_study(
+            X_train,
+            y_train,
+            X_test,
+            y_test
+        )
+    )
+
+    print("\nSelected model:", best_name)
+
+    # Save classification charts
+    classification_table = pd.DataFrame(
+        classification_results
+    ).T
+
+    save_chart(
+        plots.model_comparison(classification_table),
+        "model_comparison.png"
+    )
+
+    save_chart(
+        plots.roc_curves(classification_results),
+        "roc_curves.png"
+    )
+
+    save_chart(
+        plots.pr_curves(classification_results),
+        "pr_curves.png"
+    )
+
+    save_chart(
+        plots.confusion(
+            classification_results[best_name]["confusion"],
+            f"Confusion Matrix: {best_name}"
+        ),
+        "confusion_best.png"
+    )
+
+    # STEP 6: EXPLAINABILITY
+    print("\nSTEP 6: Explainability")
+
+    best_model = trained_models[best_name]
+
+    importance = explain.permutation_importances(
+        best_model,
+        X_test,
+        y_test
+    )
+
+    save_chart(
+        plots.permutation_importance(importance),
+        "permutation_importance.png"
+    )
+
+    # Save the trained model
+    joblib.dump(
+        best_model,
+        ARTIFACTS / "best_model.joblib",
+        compress=3
+    )
+
+    # Save actual labels and predicted probabilities
+    test_scores = pd.DataFrame({
+        "y_true": y_test.values,
+        "score": best_model.predict_proba(X_test)[:, 1]
+    })
+
+    test_scores.to_csv(
+        ARTIFACTS / "test_scores.csv",
+        index=False
+    )
+
+    # Prepare information for Streamlit
+    metadata = {
+        "data_source": data_source,
+        "trained_at": datetime.now().isoformat(timespec="seconds"),
+        "sklearn_version": sklearn.__version__,
+        "python_version": platform.python_version(),
+        "seed": SEED,
+        "cv_folds": CV_FOLDS,
+        **{
+            key: value
+            for key, value in info.items()
+            if key != "cleaning"
+        }
+    }
+
+    output = {
+        "meta": metadata,
+        "cleaning": info["cleaning"],
+        "eda": eda_results,
+        "imbalance": imbalance_results,
+        "regression": regression_results,
+        "classification": classification_results,
+        "tuning": tuning_results,
+        "best_model": best_name,
+        "permutation": importance,
+        "feature_stats": {
+            "median": X_train.median().to_dict(),
+            "q01": X_train.quantile(0.01).to_dict(),
+            "q99": X_train.quantile(0.99).to_dict()
+        }
+    }
+
+    # Save results as JSON
+    with open(ARTIFACTS / "results.json", "w") as file:
+        json.dump(
+            output,
+            file,
+            indent=4,
+            default=lambda value: (
+                value.item()
+                if hasattr(value, "item")
+                else str(value)
+            )
+        )
+
+    print("\nTraining completed successfully.")
+    print(f"Time taken: {time.time() - start_time:.1f} seconds")
+    print("Run the application using: streamlit run app.py")
 
 
 if __name__ == "__main__":
