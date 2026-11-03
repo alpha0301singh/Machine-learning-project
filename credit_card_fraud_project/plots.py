@@ -1,32 +1,31 @@
 
-"""All project charts are created in this file."""
-
 import numpy as np
 import pandas as pd
 from matplotlib.figure import Figure
 
-
-# Chart colors
 BLUE = "#4c78a8"
 RED = "#d62728"
 
 
-# Create a chart
 def create_chart(width=6, height=4):
+
     fig = Figure(figsize=(width, height), layout="constrained")
     ax = fig.subplots()
+
     return fig, ax
 
 
-# ------------------------- EDA CHARTS -------------------------
+# ---------------- EDA CHARTS ----------------
 
 def class_distribution(counts):
+
     fig, ax = create_chart()
 
-    labels = list(counts.keys())
-    values = list(counts.values())
-
-    ax.bar(labels, values, color=[BLUE, RED])
+    ax.bar(
+        list(counts.keys()),
+        list(counts.values()),
+        color=[BLUE, RED]
+    )
 
     ax.set_title("Class Distribution")
     ax.set_ylabel("Number of Transactions")
@@ -34,19 +33,26 @@ def class_distribution(counts):
     return fig
 
 
-def amount_by_class(df):
+def amount_by_class(data):
+
     fig = Figure(figsize=(9, 4), layout="constrained")
-    ax1, ax2 = fig.subplots(1, 2)
+    axes = fig.subplots(1, 2)
 
     for ax, transform, title in [
-        (ax1, lambda x: x, "Original Amount"),
-        (ax2, np.log1p, "Log Transformed Amount")
+        (axes[0], lambda x: x, "Original Amount"),
+        (axes[1], np.log1p, "Log Transformed Amount")
     ]:
+
         for label, name, color in [
             (0, "Legitimate", BLUE),
             (1, "Fraud", RED)
         ]:
-            values = df.loc[df["Class"] == label, "Amount"].dropna()
+
+            values = data.loc[
+                data["Class"] == label,
+                "Amount"
+            ].dropna()
+
             ax.hist(
                 transform(values),
                 bins=40,
@@ -63,20 +69,34 @@ def amount_by_class(df):
 
 
 def target_correlation(corr, top=15):
-    corr = corr.abs().sort_values(ascending=False).head(top)
-    corr = corr.sort_values()
+
+    corr = pd.Series(corr)
+
+    selected = corr.abs().sort_values(
+        ascending=False
+    ).head(top)
+
+    values = corr[selected.index].sort_values()
 
     fig, ax = create_chart()
 
-    ax.barh(corr.index, corr.values, color=BLUE)
-    ax.set_title("Feature Correlation with Fraud")
-    ax.set_xlabel("Absolute Correlation")
+    colors = [
+        RED if value > 0 else BLUE
+        for value in values.values
+    ]
+
+    ax.barh(values.index, values.values, color=colors)
+    ax.axvline(0, color="black")
+
+    ax.set_title("Correlation with Fraud")
+    ax.set_xlabel("Correlation")
 
     return fig
 
 
-def heatmap(df, cols):
-    correlation = df[cols].corr()
+def heatmap(data, columns):
+
+    correlation = data[columns].corr()
 
     fig, ax = create_chart(7, 5)
 
@@ -87,8 +107,8 @@ def heatmap(df, cols):
         vmax=1
     )
 
-    ax.set_xticks(range(len(cols)), cols, rotation=90)
-    ax.set_yticks(range(len(cols)), cols)
+    ax.set_xticks(range(len(columns)), columns, rotation=90)
+    ax.set_yticks(range(len(columns)), columns)
 
     fig.colorbar(image, ax=ax)
     ax.set_title("Feature Correlation Heatmap")
@@ -97,23 +117,28 @@ def heatmap(df, cols):
 
 
 def iqr_outliers(counts, top=12):
-    values = pd.Series(counts).head(top).sort_values()
+
+    values = pd.Series(counts).sort_values(
+        ascending=False
+    ).head(top).sort_values()
 
     fig, ax = create_chart()
 
     ax.barh(values.index, values.values, color=BLUE)
+
     ax.set_title("IQR Outliers")
     ax.set_xlabel("Number of Outliers")
 
     return fig
 
 
-# ------------------------- MODEL CHARTS -------------------------
+# ---------------- CLASSIFICATION CHARTS ----------------
 
-def imbalance_comparison(df):
+def imbalance_comparison(data):
+
     fig, ax = create_chart(7, 4)
 
-    df[["precision", "recall", "f1", "pr_auc"]].plot(
+    data[["precision", "recall", "f1", "pr_auc"]].plot(
         kind="bar",
         ax=ax
     )
@@ -125,10 +150,11 @@ def imbalance_comparison(df):
     return fig
 
 
-def model_comparison(df):
+def model_comparison(data):
+
     fig, ax = create_chart(8, 4)
 
-    df[["precision", "recall", "f1", "pr_auc"]].plot(
+    data[["precision", "recall", "f1", "pr_auc"]].plot(
         kind="bar",
         ax=ax
     )
@@ -141,9 +167,11 @@ def model_comparison(df):
 
 
 def roc_curves(results):
+
     fig, ax = create_chart()
 
     for name, result in results.items():
+
         roc = result["roc"]
 
         ax.plot(
@@ -153,6 +181,7 @@ def roc_curves(results):
         )
 
     ax.plot([0, 1], [0, 1], "k--")
+
     ax.set_title("ROC Curves")
     ax.set_xlabel("False Positive Rate")
     ax.set_ylabel("True Positive Rate")
@@ -162,9 +191,11 @@ def roc_curves(results):
 
 
 def pr_curves(results):
+
     fig, ax = create_chart()
 
     for name, result in results.items():
+
         pr = result["pr"]
 
         ax.plot(
@@ -182,6 +213,7 @@ def pr_curves(results):
 
 
 def confusion(cm, title="Confusion Matrix"):
+
     fig, ax = create_chart(4, 3.5)
 
     cm = np.array(cm)
@@ -194,8 +226,7 @@ def confusion(cm, title="Confusion Matrix"):
     for i in range(2):
         for j in range(2):
             ax.text(
-                j, i,
-                str(cm[i, j]),
+                j, i, str(cm[i, j]),
                 ha="center",
                 va="center"
             )
@@ -207,12 +238,13 @@ def confusion(cm, title="Confusion Matrix"):
     return fig
 
 
-# ------------------------- REGRESSION CHART -------------------------
+# ---------------- REGRESSION CHART ----------------
 
-def regression_comparison(df, target):
-    fig, ax = create_chart(7, 4)
+def regression_comparison(data, target):
 
-    df[["R2_train", "R2"]].rename(
+    fig, ax = create_chart(8, 4)
+
+    data[["R2_train", "R2"]].rename(
         columns={
             "R2_train": "Training R2",
             "R2": "Testing R2"
@@ -220,6 +252,7 @@ def regression_comparison(df, target):
     ).plot(kind="bar", ax=ax)
 
     ax.axhline(0, color="black")
+
     ax.set_title(f"Regression Results: {target}")
     ax.set_ylabel("R-squared")
     ax.tick_params(axis="x", rotation=20)
@@ -227,17 +260,20 @@ def regression_comparison(df, target):
     return fig
 
 
-# ------------------------- EXPLAINABILITY CHARTS -------------------------
+# ---------------- EXPLAINABILITY CHARTS ----------------
 
-def permutation_importance(perm, top=15):
-    df = pd.DataFrame(perm).T.head(top).sort_values("mean")
+def permutation_importance(importance, top=15):
+
+    data = pd.DataFrame(importance).T
+
+    data = data.head(top).sort_values("mean")
 
     fig, ax = create_chart()
 
     ax.barh(
-        df.index,
-        df["mean"],
-        xerr=df["std"],
+        data.index,
+        data["mean"],
+        xerr=data["std"],
         color=BLUE
     )
 
@@ -247,8 +283,9 @@ def permutation_importance(perm, top=15):
     return fig
 
 
-def local_explanation(contrib, top=10):
-    values = contrib.head(top).sort_values()
+def local_explanation(contributions, top=10):
+
+    values = contributions.head(top).sort_values()
 
     fig, ax = create_chart()
 
@@ -266,9 +303,8 @@ def local_explanation(contrib, top=10):
     return fig
 
 
-# ------------------------- COST CURVE -------------------------
-
 def cost_curve(grid, cost, selected, optimal):
+
     fig, ax = create_chart()
 
     ax.plot(grid, cost)
@@ -284,7 +320,7 @@ def cost_curve(grid, cost, selected, optimal):
         optimal,
         color="green",
         linestyle=":",
-        label="Best Cost Threshold"
+        label="Minimum Cost Threshold"
     )
 
     ax.set_title("Fraud Detection Cost Curve")

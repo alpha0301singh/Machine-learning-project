@@ -1,18 +1,29 @@
 
 import numpy as np
 
-from sklearn.compose import ColumnTransformer
-from sklearn.ensemble import RandomForestClassifier
-from sklearn.feature_selection import SelectKBest, f_classif
+from sklearn.compose import ColumnTransformer, make_column_selector
+from sklearn.pipeline import Pipeline
 from sklearn.impute import SimpleImputer
+from sklearn.preprocessing import (
+    StandardScaler,
+    OneHotEncoder,
+    PolynomialFeatures
+)
+from sklearn.feature_selection import SelectKBest, f_classif
 
 from sklearn.linear_model import (
-    LogisticRegression,
     LinearRegression,
+    LogisticRegression,
     RidgeCV,
     LassoCV,
     ElasticNetCV
 )
+
+from sklearn.neighbors import KNeighborsClassifier
+from sklearn.tree import DecisionTreeClassifier
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.svm import SVC
+from sklearn.naive_bayes import GaussianNB
 
 from sklearn.metrics import (
     accuracy_score,
@@ -29,79 +40,55 @@ from sklearn.metrics import (
     r2_score
 )
 
-from sklearn.naive_bayes import GaussianNB
-from sklearn.neighbors import KNeighborsClassifier
-from sklearn.pipeline import Pipeline
-from sklearn.preprocessing import (
-    StandardScaler,
-    FunctionTransformer,
-    PolynomialFeatures
-)
-from sklearn.svm import SVC
-from sklearn.tree import DecisionTreeClassifier
-
-from config import SEED, SELECT_K, V_COLS
+from config import SEED, SELECT_K, RF_ESTIMATORS
 
 
-# Step 1: Prepare Data
+# ---------------- PREPROCESSING ----------------
 
 def build_preprocessor():
 
-    # Handle missing values and scale Amount
-    amount_pipeline = Pipeline([
-
+    numeric_pipeline = Pipeline([
         ("imputer", SimpleImputer(strategy="median")),
-
-        ("log", FunctionTransformer(np.log1p)),
-
         ("scaler", StandardScaler())
-
     ])
 
-    # Handle missing values and scale V1 to V28
-    feature_pipeline = Pipeline([
-
-        ("imputer", SimpleImputer(strategy="median")),
-
-        ("scaler", StandardScaler())
-
+    categorical_pipeline = Pipeline([
+        ("imputer", SimpleImputer(strategy="most_frequent")),
+        ("encoder", OneHotEncoder(handle_unknown="ignore"))
     ])
 
-    # Apply different preprocessing to different columns
     preprocessor = ColumnTransformer([
-
-        ("amount", amount_pipeline, ["Amount"]),
-
-        ("features", feature_pipeline, V_COLS)
-
+        (
+            "numeric",
+            numeric_pipeline,
+            make_column_selector(dtype_include=np.number)
+        ),
+        (
+            "categorical",
+            categorical_pipeline,
+            make_column_selector(dtype_exclude=np.number)
+        )
     ])
 
     return preprocessor
 
 
-# Step 2: Create Machine Learning Pipeline
+# ---------------- CLASSIFICATION PIPELINE ----------------
 
 def build_pipeline(model, k=SELECT_K):
 
-    pipeline = Pipeline([
-
-        ("preprocessing", build_preprocessor()),
-
-        ("feature_selection", SelectKBest(score_func=f_classif, k=k)),
-
-        ("model", model)
-
+    return Pipeline([
+        ("prep", build_preprocessor()),
+        ("select", SelectKBest(score_func=f_classif, k=k)),
+        ("clf", model)
     ])
 
-    return pipeline
 
-
-# Step 3: Create Classification Models
+# ---------------- CLASSIFICATION MODELS ----------------
 
 def get_classifiers():
 
-    models = {
-
+    return {
         "Logistic Regression": LogisticRegression(
             max_iter=2000,
             class_weight="balanced"
@@ -120,7 +107,7 @@ def get_classifiers():
         ),
 
         "Random Forest": RandomForestClassifier(
-            n_estimators=150,
+            n_estimators=RF_ESTIMATORS,
             max_depth=12,
             min_samples_leaf=2,
             class_weight="balanced_subsample",
@@ -128,297 +115,189 @@ def get_classifiers():
             random_state=SEED
         ),
 
-        "SVM (RBF)": SVC(
+        "SVM": SVC(
             kernel="rbf",
+            probability=True,
             class_weight="balanced",
             random_state=SEED
         ),
 
         "Naive Bayes": GaussianNB()
-
     }
 
-    return models
 
-
-# Step 4: Random Forest Parameter Settings
+# ---------------- RANDOM FOREST TUNING ----------------
 
 RF_GRID = {
-
-    "model__max_depth": [8, 12],
-
-    "model__min_samples_leaf": [1, 3],
-
-    "feature_selection__k": [SELECT_K, "all"]
-
+    "clf__max_depth": [8, 12],
+    "clf__min_samples_leaf": [1, 3],
+    "select__k": [SELECT_K, "all"]
 }
 
 
-# Step 5: Create Random Forest Model for Tuning
-
 def tuned_rf_pipeline():
 
-    model = RandomForestClassifier(
-
-        n_estimators=150,
-
-        class_weight="balanced_subsample",
-
-        n_jobs=-1,
-
-        random_state=SEED
-
+    return build_pipeline(
+        RandomForestClassifier(
+            n_estimators=RF_ESTIMATORS,
+            class_weight="balanced_subsample",
+            n_jobs=-1,
+            random_state=SEED
+        )
     )
 
-    return build_pipeline(model)
-
-
-# Step 6: Rebuild Best Model
 
 def rebuild_best(name, params=None):
 
-    # Rebuild tuned Random Forest
-    if name.endswith("(tuned)"):
-
+    if name == "Random Forest (tuned)":
         model = tuned_rf_pipeline()
 
-        model.set_params(**(params or {}))
+        if params:
+            model.set_params(**params)
 
         return model
 
-    # Rebuild another classification model
-    models = get_classifiers()
+    classifiers = get_classifiers()
 
-    return build_pipeline(models[name])
+    if name not in classifiers:
+        raise ValueError(f"Unknown model: {name}")
+
+    return build_pipeline(classifiers[name])
 
 
-# Step 7: Create Regression Models
+# ---------------- REGRESSION MODELS ----------------
 
 def get_regressors(features, best_single):
 
     models = []
 
     # Simple Linear Regression
-    simple_model = Pipeline([
-
-        ("scaler", StandardScaler()),
-
-        ("model", LinearRegression())
-
-    ])
-
     models.append((
-        f"Simple Linear [{best_single}]",
-        simple_model,
+        "Simple Linear Regression",
+        Pipeline([
+            ("prep", build_preprocessor()),
+            ("m", LinearRegression())
+        ]),
         [best_single]
     ))
 
     # Multiple Linear Regression
-    multiple_model = Pipeline([
-
-        ("scaler", StandardScaler()),
-
-        ("model", LinearRegression())
-
-    ])
-
     models.append((
-        "Multiple Linear",
-        multiple_model,
+        "Multiple Linear Regression",
+        Pipeline([
+            ("prep", build_preprocessor()),
+            ("m", LinearRegression())
+        ]),
         features
     ))
 
     # Polynomial Regression
-    polynomial_model = Pipeline([
-
-        ("polynomial", PolynomialFeatures(
-            degree=2,
-            include_bias=False
-        )),
-
-        ("scaler", StandardScaler()),
-
-        ("model", LinearRegression())
-
-    ])
-
     models.append((
-        "Polynomial (deg 2)",
-        polynomial_model,
-        features
+        "Polynomial Regression",
+        Pipeline([
+            ("prep", build_preprocessor()),
+            ("poly", PolynomialFeatures(degree=2, include_bias=False)),
+            ("m", LinearRegression())
+        ]),
+        [best_single]
     ))
 
     # Ridge Regression
-    ridge_model = Pipeline([
-
-        ("scaler", StandardScaler()),
-
-        ("model", RidgeCV(
-            alphas=np.logspace(-2, 3, 20)
-        ))
-
-    ])
-
     models.append((
-        "Ridge (CV alpha)",
-        ridge_model,
+        "Ridge Regression",
+        Pipeline([
+            ("prep", build_preprocessor()),
+            ("m", RidgeCV(alphas=[0.1, 1.0, 10.0]))
+        ]),
         features
     ))
 
     # Lasso Regression
-    lasso_model = Pipeline([
-
-        ("scaler", StandardScaler()),
-
-        ("model", LassoCV(
-            cv=3,
-            n_alphas=30,
-            max_iter=5000,
-            random_state=SEED
-        ))
-
-    ])
-
     models.append((
-        "Lasso (CV alpha)",
-        lasso_model,
+        "Lasso Regression",
+        Pipeline([
+            ("prep", build_preprocessor()),
+            ("m", LassoCV(cv=3, max_iter=10000, random_state=SEED))
+        ]),
         features
     ))
 
     # Elastic Net Regression
-    elastic_model = Pipeline([
-
-        ("scaler", StandardScaler()),
-
-        ("model", ElasticNetCV(
-            l1_ratio=[0.2, 0.5, 0.8],
-            cv=3,
-            n_alphas=30,
-            max_iter=5000,
-            random_state=SEED
-        ))
-
-    ])
-
     models.append((
-        "Elastic Net (CV)",
-        elastic_model,
+        "Elastic Net",
+        Pipeline([
+            ("prep", build_preprocessor()),
+            ("m", ElasticNetCV(cv=3, max_iter=10000, random_state=SEED))
+        ]),
         features
     ))
 
     return models
 
 
-# Step 8: Get Model Predictions
+# ---------------- PREDICTION SCORES ----------------
 
 def get_scores(model, X):
 
-    # Get fraud probabilities if available
     if hasattr(model, "predict_proba"):
+        return model.predict_proba(X)[:, 1]
 
-        scores = model.predict_proba(X)[:, 1]
-
-    else:
-
-        # Get decision scores for models without predict_proba
-        scores = model.decision_function(X)
-
-    return scores
+    return model.decision_function(X)
 
 
-# Step 9: Reduce Graph Data Points
+# ---------------- CLASSIFICATION METRICS ----------------
 
-def reduce_points(x_values, y_values, n=200):
+def thin_data(x, y, maximum=200):
 
-    # Select a maximum of 200 points
+    if len(x) <= maximum:
+        return x.tolist(), y.tolist()
+
     indexes = np.linspace(
         0,
-        len(x_values) - 1,
-        min(n, len(x_values))
+        len(x) - 1,
+        maximum
     ).astype(int)
 
-    x_values = x_values[indexes].round(4).tolist()
+    return x[indexes].tolist(), y[indexes].tolist()
 
-    y_values = y_values[indexes].round(4).tolist()
-
-    return x_values, y_values
-
-
-# Step 10: Calculate Classification Performance
 
 def classification_metrics(y, predictions, scores):
 
-    # Calculate ROC curve
-    fpr, tpr, _ = roc_curve(y, scores)
+    y = np.asarray(y)
+    predictions = np.asarray(predictions)
+    scores = np.asarray(scores)
 
-    # Calculate Precision-Recall curve
+    fpr, tpr, _ = roc_curve(y, scores)
     precision, recall, _ = precision_recall_curve(y, scores)
 
-    # Calculate confusion matrix
-    matrix = confusion_matrix(y, predictions)
+    fpr, tpr = thin_data(fpr, tpr)
+    precision, recall = thin_data(precision, recall)
 
-    results = {
+    cm = confusion_matrix(y, predictions, labels=[0, 1])
 
-        "accuracy": accuracy_score(y, predictions),
-
-        "precision": precision_score(
-            y, predictions, zero_division=0
-        ),
-
-        "recall": recall_score(
-            y, predictions, zero_division=0
-        ),
-
-        "f1": f1_score(
-            y, predictions, zero_division=0
-        ),
-
-        "roc_auc": roc_auc_score(y, scores),
-
-        "pr_auc": average_precision_score(y, scores),
-
-        "confusion": matrix.tolist(),
-
-        "roc": {
-
-            "fpr": reduce_points(fpr, tpr)[0],
-
-            "tpr": reduce_points(fpr, tpr)[1]
-
-        },
-
-        "pr": {
-
-            "precision": reduce_points(precision, recall)[0],
-
-            "recall": reduce_points(precision, recall)[1]
-
-        }
-
+    return {
+        "accuracy": float(accuracy_score(y, predictions)),
+        "precision": float(precision_score(y, predictions, zero_division=0)),
+        "recall": float(recall_score(y, predictions, zero_division=0)),
+        "f1": float(f1_score(y, predictions, zero_division=0)),
+        "roc_auc": float(roc_auc_score(y, scores)),
+        "pr_auc": float(average_precision_score(y, scores)),
+        "confusion": cm.tolist(),
+        "roc": {"fpr": fpr, "tpr": tpr},
+        "pr": {"precision": precision, "recall": recall}
     }
 
-    return results
 
-
-# Step 11: Calculate Regression Performance
+# ---------------- REGRESSION METRICS ----------------
 
 def regression_metrics(y_test, predictions, y_train, train_predictions):
 
-    # Calculate Mean Squared Error
     mse = mean_squared_error(y_test, predictions)
 
-    results = {
-
-        "MAE": mean_absolute_error(y_test, predictions),
-
-        "MSE": mse,
-
+    return {
+        "MAE": float(mean_absolute_error(y_test, predictions)),
+        "MSE": float(mse),
         "RMSE": float(np.sqrt(mse)),
-
-        "R2": r2_score(y_test, predictions),
-
-        "R2_train": r2_score(y_train, train_predictions)
-
+        "R2": float(r2_score(y_test, predictions)),
+        "R2_train": float(r2_score(y_train, train_predictions))
     }
-
-    return results

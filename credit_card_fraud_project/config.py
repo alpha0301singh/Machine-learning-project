@@ -1,18 +1,33 @@
-"""All settings in one place. Edit here, every other file picks it up."""
+
 from pathlib import Path
 
+# Main project folder
 ROOT = Path(__file__).resolve().parent
-DATA_FILE = ROOT / "data" / "creditcard_2023.csv"   # the Kaggle dataset (see README)
-ARTIFACTS = ROOT / "artifacts"                       # everything the Streamlit app reads
-REPORTS = ROOT / "reports"                           # PNG charts for your report
 
-V_COLS = [f"V{i}" for i in range(1, 29)]             # anonymised features
+# Project folders
+DATA_FOLDER = ROOT / "data"
+ARTIFACTS = ROOT / "artifacts"
+REPORTS = ROOT / "reports"
+
+# Dataset
+DATA_FILE = DATA_FOLDER / "creditcard_2023.csv"
+
+# Dataset columns
+V_COLS = [f"V{i}" for i in range(1, 29)]
 FEATURES = V_COLS + ["Amount"]
-TARGET = "Class"                                     # 1 = fraud, 0 = legitimate
+TARGET = "Class"
 
+# Model settings
 SEED = 42
-N_LEGIT = 20000      # legitimate rows kept (keeps training fast)
-FRAUD_RATE = 0.02    # fraud share after re-balancing (real fraud is rare)
-TEST_SIZE = 0.2
+TEST_SIZE = 0.20
 CV_FOLDS = 3
-SELECT_K = 20        # features kept by feature selection
+SELECT_K = 20
+RF_ESTIMATORS = 150
+
+
+# Dataset balancing settings
+N_LEGIT = 20000
+FRAUD_RATE = 0.02
+
+# Random Forest tuning
+RF_ESTIMATORS = 150

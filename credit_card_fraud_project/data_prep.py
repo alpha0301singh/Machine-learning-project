@@ -1,19 +1,12 @@
 
-"""Data loading, cleaning, balancing and splitting."""
-
 import pandas as pd
 import numpy as np
+
 from sklearn.model_selection import train_test_split
 
 from config import (
-    DATA_FILE,
-    ARTIFACTS,
-    FEATURES,
-    TARGET,
-    N_LEGIT,
-    FRAUD_RATE,
-    SEED,
-    TEST_SIZE
+    DATA_FILE, ARTIFACTS, FEATURES, TARGET,
+    N_LEGIT, FRAUD_RATE, SEED, TEST_SIZE
 )
 
 
@@ -21,10 +14,7 @@ from config import (
 
 def load_data(path=DATA_FILE):
 
-    try:
-        data = pd.read_csv(path)
-    except FileNotFoundError:
-        raise FileNotFoundError(f"Dataset not found: {path}")
+    data = pd.read_csv(path)
 
     print("Dataset loaded successfully")
     print("Total rows:", len(data))
@@ -38,46 +28,36 @@ def clean_data(data):
 
     original_rows = len(data)
 
-    # Check required columns
     required_columns = FEATURES + [TARGET]
+
     missing_columns = [
-        column for column in required_columns
-        if column not in data.columns
+        col for col in required_columns
+        if col not in data.columns
     ]
 
     if missing_columns:
-        raise ValueError(
-            f"Missing required columns: {missing_columns}"
-        )
+        raise ValueError(f"Missing columns: {missing_columns}")
 
-    # Keep only required columns
     data = data[required_columns].copy()
 
-    # Convert columns to numeric values
-    for column in required_columns:
-        data[column] = pd.to_numeric(
-            data[column],
-            errors="coerce"
-        )
+    # Convert columns into numeric values
+    for col in required_columns:
+        data[col] = pd.to_numeric(data[col], errors="coerce")
 
-    # Replace infinite values with missing values
+    # Handle infinite values
     data = data.replace([np.inf, -np.inf], np.nan)
 
-    # Treat negative transaction amounts as missing
+    # Negative amounts are treated as missing
     data.loc[data["Amount"] < 0, "Amount"] = np.nan
 
-    # Keep only valid fraud labels
+    # Keep valid target labels
     data = data[data[TARGET].isin([0, 1])].copy()
 
-    # Convert fraud labels to integers
     data[TARGET] = data[TARGET].astype(int)
 
-    # Remove duplicate rows
-    data = data.drop_duplicates()
+    # Remove duplicate records
+    data = data.drop_duplicates().reset_index(drop=True)
 
-    data = data.reset_index(drop=True)
-
-    # Cleaning information
     cleaning_info = {
         "original_rows": int(original_rows),
         "remaining_rows": int(len(data)),
@@ -85,7 +65,7 @@ def clean_data(data):
         "missing_values": int(data.isnull().sum().sum())
     }
 
-    print("\nData cleaning completed")
+    print("Data cleaning completed")
     print("Remaining rows:", len(data))
     print("Missing values:", cleaning_info["missing_values"])
 
@@ -97,59 +77,47 @@ def clean_data(data):
 def balance_data(data, n_legit=N_LEGIT, fraud_rate=FRAUD_RATE):
 
     if n_legit <= 0:
-        raise ValueError("n_legit must be greater than zero")
+        raise ValueError("n_legit must be positive")
 
     if not 0 < fraud_rate < 1:
         raise ValueError("fraud_rate must be between 0 and 1")
 
-    # Separate legitimate and fraud transactions
     normal = data[data[TARGET] == 0]
     fraud = data[data[TARGET] == 1]
 
     if len(normal) == 0 or len(fraud) == 0:
-        raise ValueError(
-            "Dataset must contain both legitimate and fraud transactions"
-        )
+        raise ValueError("Both classes must be present")
 
-    # Select legitimate transactions
     normal = normal.sample(
         n=min(n_legit, len(normal)),
         random_state=SEED
     )
 
-    # Calculate required fraud transactions
     fraud_count = int(
         len(normal) * fraud_rate / (1 - fraud_rate)
     )
 
-    # Select available fraud transactions
     fraud = fraud.sample(
         n=min(fraud_count, len(fraud)),
         random_state=SEED
     )
 
-    # Combine both classes
-    balanced_data = pd.concat(
+    balanced = pd.concat(
         [normal, fraud],
         ignore_index=True
     )
 
-    # Shuffle transactions
-    balanced_data = balanced_data.sample(
+    balanced = balanced.sample(
         frac=1,
         random_state=SEED
     ).reset_index(drop=True)
 
-    print("\nClass balancing completed")
-    print("Legitimate transactions:", len(normal))
-    print("Fraud transactions:", len(fraud))
-    print(
-        "Actual fraud percentage:",
-        round(balanced_data[TARGET].mean() * 100, 2),
-        "%"
-    )
+    print("Class balancing completed")
+    print("Legitimate:", len(normal))
+    print("Fraud:", len(fraud))
+    print("Actual fraud rate:", round(balanced[TARGET].mean() * 100, 2), "%")
 
-    return balanced_data
+    return balanced
 
 
 # STEP 4: SPLIT DATA
@@ -167,75 +135,50 @@ def split_data(data):
         stratify=y
     )
 
-    # Combine features and target into DataFrames
     train = X_train.copy()
     train[TARGET] = y_train
 
     test = X_test.copy()
     test[TARGET] = y_test
 
-    print("\nTraining and testing data created")
-    print("Training rows:", len(train))
-    print("Testing rows:", len(test))
-
     return train, test
 
 
-# STEP 5: COMPLETE DATA PREPARATION
+# STEP 5: COMPLETE PREPARATION
 
 def prepare(path=DATA_FILE, n_legit=N_LEGIT, fraud_rate=FRAUD_RATE):
 
-    # Load dataset
     raw_data = load_data(path)
 
-    raw_rows = len(raw_data)
-
-    # Clean dataset
     cleaned_data, cleaning_info = clean_data(raw_data)
 
-    # Balance dataset
     balanced_data = balance_data(
         cleaned_data,
         n_legit,
         fraud_rate
     )
 
-    # Split dataset
     train, test = split_data(balanced_data)
 
-    # Create artifacts folder
     ARTIFACTS.mkdir(parents=True, exist_ok=True)
 
-    # Save training and testing datasets
-    train.to_csv(
-        ARTIFACTS / "train.csv",
-        index=False
-    )
+    train.to_csv(ARTIFACTS / "train.csv", index=False)
+    test.to_csv(ARTIFACTS / "test.csv", index=False)
 
-    test.to_csv(
-        ARTIFACTS / "test.csv",
-        index=False
-    )
-
-    # Information used by train.py and app.py
     info = {
-        "raw_rows": int(raw_rows),
+        "raw_rows": int(len(raw_data)),
         "study_rows": int(len(balanced_data)),
         "fraud_rate": float(balanced_data[TARGET].mean()),
         "test_rows": int(len(test)),
         "cleaning": cleaning_info
     }
 
-    print("\nData preparation completed successfully")
-    print("Training fraud percentage:",
-          round(train[TARGET].mean() * 100, 2), "%")
-    print("Testing fraud percentage:",
-          round(test[TARGET].mean() * 100, 2), "%")
+    print("\nData preparation completed")
+    print("Training rows:", len(train))
+    print("Testing rows:", len(test))
 
     return train, test, info
 
-
-# RUN THIS FILE DIRECTLY
 
 if __name__ == "__main__":
     prepare()
