@@ -1,5 +1,5 @@
 !data/
-!data/creditcard_2023.csv
+!data/indian_banking_transactions.csv
 __pycache__/
 *.pyc
 .venv/

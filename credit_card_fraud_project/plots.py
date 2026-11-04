@@ -1,331 +1,72 @@
 
-import numpy as np
 import pandas as pd
-from matplotlib.figure import Figure
+import matplotlib.pyplot as plt
 
-BLUE = "#4c78a8"
-RED = "#d62728"
+from sklearn.metrics import ConfusionMatrixDisplay
 
-
-def create_chart(width=6, height=4):
-
-    fig = Figure(figsize=(width, height), layout="constrained")
-    ax = fig.subplots()
-
-    return fig, ax
+from config import (
+    COMPARISON_FILE,
+    PREDICTIONS_FILE,
+    REPORTS
+)
 
 
-# ---------------- EDA CHARTS ----------------
+def plot_model_comparison():
 
-def class_distribution(counts):
-
-    fig, ax = create_chart()
-
-    ax.bar(
-        list(counts.keys()),
-        list(counts.values()),
-        color=[BLUE, RED]
+    df = pd.read_csv(
+        COMPARISON_FILE,
+        index_col="Model"
     )
 
-    ax.set_title("Class Distribution")
-    ax.set_ylabel("Number of Transactions")
+    plt.figure(figsize=(10, 6))
 
-    return fig
-
-
-def amount_by_class(data):
-
-    fig = Figure(figsize=(9, 4), layout="constrained")
-    axes = fig.subplots(1, 2)
-
-    for ax, transform, title in [
-        (axes[0], lambda x: x, "Original Amount"),
-        (axes[1], np.log1p, "Log Transformed Amount")
-    ]:
-
-        for label, name, color in [
-            (0, "Legitimate", BLUE),
-            (1, "Fraud", RED)
-        ]:
-
-            values = data.loc[
-                data["Class"] == label,
-                "Amount"
-            ].dropna()
-
-            ax.hist(
-                transform(values),
-                bins=40,
-                alpha=0.6,
-                label=name,
-                color=color
-            )
-
-        ax.set_title(title)
-        ax.set_ylabel("Frequency")
-        ax.legend()
-
-    return fig
-
-
-def target_correlation(corr, top=15):
-
-    corr = pd.Series(corr)
-
-    selected = corr.abs().sort_values(
-        ascending=False
-    ).head(top)
-
-    values = corr[selected.index].sort_values()
-
-    fig, ax = create_chart()
-
-    colors = [
-        RED if value > 0 else BLUE
-        for value in values.values
-    ]
-
-    ax.barh(values.index, values.values, color=colors)
-    ax.axvline(0, color="black")
-
-    ax.set_title("Correlation with Fraud")
-    ax.set_xlabel("Correlation")
-
-    return fig
-
-
-def heatmap(data, columns):
-
-    correlation = data[columns].corr()
-
-    fig, ax = create_chart(7, 5)
-
-    image = ax.imshow(
-        correlation,
-        cmap="coolwarm",
-        vmin=-1,
-        vmax=1
+    df["pr_auc"].sort_values().plot(
+        kind="barh"
     )
 
-    ax.set_xticks(range(len(columns)), columns, rotation=90)
-    ax.set_yticks(range(len(columns)), columns)
+    plt.title("Model Comparison Using PR-AUC")
 
-    fig.colorbar(image, ax=ax)
-    ax.set_title("Feature Correlation Heatmap")
+    plt.xlabel("PR-AUC")
 
-    return fig
+    plt.ylabel("Classification Model")
 
+    plt.tight_layout()
 
-def iqr_outliers(counts, top=12):
-
-    values = pd.Series(counts).sort_values(
-        ascending=False
-    ).head(top).sort_values()
-
-    fig, ax = create_chart()
-
-    ax.barh(values.index, values.values, color=BLUE)
-
-    ax.set_title("IQR Outliers")
-    ax.set_xlabel("Number of Outliers")
-
-    return fig
-
-
-# ---------------- CLASSIFICATION CHARTS ----------------
-
-def imbalance_comparison(data):
-
-    fig, ax = create_chart(7, 4)
-
-    data[["precision", "recall", "f1", "pr_auc"]].plot(
-        kind="bar",
-        ax=ax
+    plt.savefig(
+        REPORTS / "model_comparison.png"
     )
 
-    ax.set_title("Imbalance Handling Comparison")
-    ax.set_ylabel("Score")
-    ax.tick_params(axis="x", rotation=15)
-
-    return fig
+    plt.close()
 
 
-def model_comparison(data):
+def plot_confusion_matrix():
 
-    fig, ax = create_chart(8, 4)
+    df = pd.read_csv(PREDICTIONS_FILE)
 
-    data[["precision", "recall", "f1", "pr_auc"]].plot(
-        kind="bar",
-        ax=ax
+    ConfusionMatrixDisplay.from_predictions(
+        df["actual"],
+        df["predicted"],
+        display_labels=[
+            "Legitimate",
+            "Fraud"
+        ]
     )
 
-    ax.set_title("Classification Model Comparison")
-    ax.set_ylabel("Score")
-    ax.tick_params(axis="x", rotation=25)
+    plt.title("Fraud Detection Confusion Matrix")
 
-    return fig
+    plt.tight_layout()
 
-
-def roc_curves(results):
-
-    fig, ax = create_chart()
-
-    for name, result in results.items():
-
-        roc = result["roc"]
-
-        ax.plot(
-            roc["fpr"],
-            roc["tpr"],
-            label=f"{name} ({result['roc_auc']:.3f})"
-        )
-
-    ax.plot([0, 1], [0, 1], "k--")
-
-    ax.set_title("ROC Curves")
-    ax.set_xlabel("False Positive Rate")
-    ax.set_ylabel("True Positive Rate")
-    ax.legend(fontsize=7)
-
-    return fig
-
-
-def pr_curves(results):
-
-    fig, ax = create_chart()
-
-    for name, result in results.items():
-
-        pr = result["pr"]
-
-        ax.plot(
-            pr["recall"],
-            pr["precision"],
-            label=name
-        )
-
-    ax.set_title("Precision-Recall Curves")
-    ax.set_xlabel("Recall")
-    ax.set_ylabel("Precision")
-    ax.legend(fontsize=6)
-
-    return fig
-
-
-def confusion(cm, title="Confusion Matrix"):
-
-    fig, ax = create_chart(4, 3.5)
-
-    cm = np.array(cm)
-
-    ax.imshow(cm, cmap="Blues")
-
-    ax.set_xticks([0, 1], ["Legitimate", "Fraud"])
-    ax.set_yticks([0, 1], ["Legitimate", "Fraud"])
-
-    for i in range(2):
-        for j in range(2):
-            ax.text(
-                j, i, str(cm[i, j]),
-                ha="center",
-                va="center"
-            )
-
-    ax.set_title(title)
-    ax.set_xlabel("Predicted")
-    ax.set_ylabel("Actual")
-
-    return fig
-
-
-# ---------------- REGRESSION CHART ----------------
-
-def regression_comparison(data, target):
-
-    fig, ax = create_chart(8, 4)
-
-    data[["R2_train", "R2"]].rename(
-        columns={
-            "R2_train": "Training R2",
-            "R2": "Testing R2"
-        }
-    ).plot(kind="bar", ax=ax)
-
-    ax.axhline(0, color="black")
-
-    ax.set_title(f"Regression Results: {target}")
-    ax.set_ylabel("R-squared")
-    ax.tick_params(axis="x", rotation=20)
-
-    return fig
-
-
-# ---------------- EXPLAINABILITY CHARTS ----------------
-
-def permutation_importance(importance, top=15):
-
-    data = pd.DataFrame(importance).T
-
-    data = data.head(top).sort_values("mean")
-
-    fig, ax = create_chart()
-
-    ax.barh(
-        data.index,
-        data["mean"],
-        xerr=data["std"],
-        color=BLUE
+    plt.savefig(
+        REPORTS / "confusion_matrix.png"
     )
 
-    ax.set_title("Permutation Feature Importance")
-    ax.set_xlabel("Decrease in Average Precision")
-
-    return fig
+    plt.close()
 
 
-def local_explanation(contributions, top=10):
+if __name__ == "__main__":
 
-    values = contributions.head(top).sort_values()
+    plot_model_comparison()
 
-    fig, ax = create_chart()
+    plot_confusion_matrix()
 
-    colors = [
-        RED if value > 0 else BLUE
-        for value in values.values
-    ]
-
-    ax.barh(values.index, values.values, color=colors)
-    ax.axvline(0, color="black")
-
-    ax.set_title("Local Transaction Explanation")
-    ax.set_xlabel("Change in Fraud Probability")
-
-    return fig
-
-
-def cost_curve(grid, cost, selected, optimal):
-
-    fig, ax = create_chart()
-
-    ax.plot(grid, cost)
-
-    ax.axvline(
-        selected,
-        color=RED,
-        linestyle="--",
-        label="Selected Threshold"
-    )
-
-    ax.axvline(
-        optimal,
-        color="green",
-        linestyle=":",
-        label="Minimum Cost Threshold"
-    )
-
-    ax.set_title("Fraud Detection Cost Curve")
-    ax.set_xlabel("Probability Threshold")
-    ax.set_ylabel("Total Cost")
-    ax.legend()
-
-    return fig
+    print("Model charts saved successfully.")

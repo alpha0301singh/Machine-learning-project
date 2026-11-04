@@ -1,90 +1,74 @@
 
-import numpy as np
-import pandas as pd
 from pathlib import Path
 
+import numpy as np
+import pandas as pd
 
-# Step 1: Set Dataset Location
-
-DEMO_FILE = Path(__file__).resolve().parent / "data" / "creditcard_2023_demo.csv"
+from config import DATA_FOLDER, V_COLS
 
 
-# Step 2: Generate Demo Dataset
+DEMO_FILE = DATA_FOLDER / "creditcard_2023_demo.csv"
 
-def make_demo_data(rows=30000, seed=0):
 
-    # Set random seed
-    np.random.seed(seed)
+def make(path=DEMO_FILE, rows=30000, seed=42):
 
-    # Generate fraud labels
-    fraud_labels = np.random.randint(0, 2, rows)
+    rng = np.random.default_rng(seed)
 
-    # Generate 28 transaction features
-    features = np.random.normal(0, 1, (rows, 28))
-
-    # Add some differences to fraud transactions
-    fraud_features = [3, 9, 11, 13, 16]
-
-    changes = [1.2, -1.4, -1.6, -1.8, -1.1]
-
-    # Apply changes to fraud transactions
-    for i in range(len(fraud_features)):
-
-        feature_number = fraud_features[i]
-
-        features[:, feature_number] += (
-            fraud_labels * changes[i]
-        )
-
-    # Create feature column names
-    column_names = []
-
-    for i in range(1, 29):
-        column_names.append("V" + str(i))
-
-    # Create DataFrame
-    data = pd.DataFrame(
-        features,
-        columns=column_names
+    # Generate transaction labels
+    labels = rng.choice(
+        [0, 1],
+        size=rows,
+        p=[0.98, 0.02]
     )
 
-    # Add transaction ID
-    data.insert(0, "id", range(rows))
+    # Generate numerical features
+    features = rng.normal(
+        0,
+        1,
+        size=(rows, len(V_COLS))
+    )
+
+    # Add artificial differences to fraud transactions
+    fraud_indexes = np.where(labels == 1)[0]
+
+    selected_features = [3, 9, 11, 13, 16]
+
+    shifts = [1.2, -1.4, -1.6, -1.8, -1.1]
+
+    for feature, shift in zip(selected_features, shifts):
+
+        features[fraud_indexes, feature] += shift
 
     # Generate transaction amounts
-    data["Amount"] = np.random.uniform(
-        50, 24000, rows
-    ).round(2)
-
-    # Add fraud labels
-    data["Class"] = fraud_labels
-
-    # Create data folder if it does not exist
-    DEMO_FILE.parent.mkdir(
-        parents=True,
-        exist_ok=True
+    amount = rng.lognormal(
+        mean=4,
+        sigma=1,
+        size=rows
     )
 
-    # Save dataset
-    data.to_csv(DEMO_FILE, index=False)
+    # Create dataset
+    data = pd.DataFrame(
+        features,
+        columns=V_COLS
+    )
 
-    print("\nDemo Dataset Created Successfully!")
+    data["Amount"] = np.round(amount, 2)
+    data["Class"] = labels
 
-    print("Total Transactions:", len(data))
+    # Add an ID column for demonstration
+    data.insert(0, "id", range(1, rows + 1))
 
-    print("Normal Transactions:",
-          (data["Class"] == 0).sum())
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
 
-    print("Fraud Transactions:",
-          (data["Class"] == 1).sum())
+    data.to_csv(path, index=False)
 
-    print("Dataset Location:", DEMO_FILE)
+    print("Synthetic dataset created:", path)
+    print("Total rows:", len(data))
+    print("Fraud rows:", int(data["Class"].sum()))
 
-    return data
+    return path
 
-
-# Step 3: Run Program
 
 if __name__ == "__main__":
-
-    make_demo_data()
+    make()

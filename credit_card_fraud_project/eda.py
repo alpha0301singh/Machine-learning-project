@@ -1,195 +1,150 @@
 
-import numpy as np
-import pandas as pd
+import matplotlib.pyplot as plt
 
-from sklearn.ensemble import IsolationForest
-from sklearn.metrics import precision_score, recall_score
-
-from config import FEATURES, TARGET, SEED, REPORTS
-import plots
+from config import REPORTS, TARGET
+from data_prep import load_data, clean_data
 
 
-# STEP 1: DETECT OUTLIERS USING IQR
+def compute_eda():
 
-def iqr_outlier_mask(data, factor=1.5):
+    df = clean_data(load_data())
 
-    Q1 = data.quantile(0.25)
-    Q3 = data.quantile(0.75)
+    print("\n========== DATASET SUMMARY ==========")
 
-    IQR = Q3 - Q1
+    print("Shape:", df.shape)
 
-    lower = Q1 - factor * IQR
-    upper = Q3 + factor * IQR
+    print("\nMissing values:")
 
-    return (data < lower) | (data > upper)
+    print(df.isnull().sum())
 
+    print("\nFraud distribution:")
 
-# STEP 2: PERFORM EDA
+    print(df[TARGET].value_counts())
 
-def compute_eda(data):
+    print("\nFraud percentage:")
 
-    X = data[FEATURES]
-    y = data[TARGET]
-
-    # Class distribution
-    class_counts = {
-        "Legitimate": int((y == 0).sum()),
-        "Fraud": int((y == 1).sum())
-    }
-
-    # Missing values
-    missing_values = data.isnull().sum().to_dict()
-
-    # Amount skewness
-    amount_skewness = float(data["Amount"].skew())
-
-    # Correlation with target
-    correlations = data[FEATURES + [TARGET]].corr()[TARGET]
-    correlations = correlations.drop(TARGET)
-
-    # Strongly correlated feature pairs
-    correlation_matrix = data[FEATURES].corr()
-
-    redundant_pairs = []
-
-    for i in range(len(FEATURES)):
-        for j in range(i + 1, len(FEATURES)):
-
-            value = correlation_matrix.iloc[i, j]
-
-            if abs(value) >= 0.8:
-                redundant_pairs.append({
-                    "feature_1": FEATURES[i],
-                    "feature_2": FEATURES[j],
-                    "correlation": float(value)
-                })
-
-    # IQR outlier detection
-    outlier_mask = iqr_outlier_mask(X)
-
-    outlier_counts = outlier_mask.sum().to_dict()
-
-    mean_outliers = float(outlier_mask.sum(axis=1).mean())
-
-    # Isolation Forest
-    filled_data = X.fillna(X.median())
-
-    contamination = float(y.mean())
-
-    isolation_forest = IsolationForest(
-        contamination=contamination,
-        random_state=SEED
+    print(
+        df[TARGET].value_counts(normalize=True) * 100
     )
 
-    predictions = isolation_forest.fit_predict(filled_data)
+    # 1. Fraud distribution
+    plt.figure(figsize=(7, 5))
 
-    # Isolation Forest: -1 means anomaly, 1 means normal
-    anomaly_flags = predictions == -1
+    df[TARGET].value_counts().sort_index().plot(
+        kind="bar"
+    )
 
-    isolation_results = {
-        "flagged": int(anomaly_flags.sum()),
-        "precision": float(
-            precision_score(y, anomaly_flags, zero_division=0)
-        ),
-        "recall": float(
-            recall_score(y, anomaly_flags, zero_division=0)
+    plt.title("Fraud vs Legitimate Transactions")
+
+    plt.xlabel("Transaction Class")
+
+    plt.ylabel("Number of Transactions")
+
+    plt.xticks(
+        [0, 1],
+        ["Legitimate", "Fraud"],
+        rotation=0
+    )
+
+    plt.tight_layout()
+
+    plt.savefig(
+        REPORTS / "fraud_distribution.png"
+    )
+
+    plt.close()
+
+    # 2. Transaction amount distribution
+    plt.figure(figsize=(8, 5))
+
+    for fraud_class, group in df.groupby(TARGET):
+
+        plt.hist(
+            group["transaction_amount"].clip(upper=1000000),
+            bins=50,
+            alpha=0.5,
+            label="Fraud" if fraud_class == 1 else "Legitimate"
         )
-    }
 
-    results = {
-        "class_counts": class_counts,
-        "missing_values": missing_values,
-        "amount_skewness": amount_skewness,
-        "corr_with_class": correlations.to_dict(),
-        "redundant_pairs": redundant_pairs,
-        "isolation_forest": isolation_results,
-        "iqr_outliers_per_feature": outlier_counts,
-        "mean_outlier_features_per_row": mean_outliers,
-        "note": (
-            "Outlier detection identifies unusual observations. "
-            "An unusual transaction is not automatically fraudulent."
-        )
-    }
+    plt.title("Transaction Amount Distribution")
 
-    return results
+    plt.xlabel("Transaction Amount (INR)")
 
+    plt.ylabel("Number of Transactions")
 
-# STEP 3: PRINT EDA SUMMARY
+    plt.legend()
 
-def print_summary(results):
+    plt.tight_layout()
 
-    print("\nEXPLORATORY DATA ANALYSIS")
-
-    print("\nClass Distribution:")
-    print(results["class_counts"])
-
-    print("\nMissing Values:")
-    print(results["missing_values"])
-
-    print("\nAmount Skewness:")
-    print(results["amount_skewness"])
-
-    print("\nFeature Correlation with Fraud:")
-    print(results["corr_with_class"])
-
-    print("\nIsolation Forest Results:")
-    print(results["isolation_forest"])
-
-    print("\nIQR Outliers:")
-    print(results["iqr_outliers_per_feature"])
-
-
-# STEP 4: SAVE EDA CHARTS
-
-def save_eda_charts(data, results):
-
-    REPORTS.mkdir(parents=True, exist_ok=True)
-
-    save_chart = lambda fig, name: fig.savefig(
-        REPORTS / name,
-        dpi=150,
-        bbox_inches="tight"
+    plt.savefig(
+        REPORTS / "transaction_amount.png"
     )
 
-    save_chart(
-        plots.class_distribution(results["class_counts"]),
-        "class_distribution.png"
+    plt.close()
+
+    # 3. Fraud rate by transaction hour
+    fraud_by_hour = df.groupby(
+        "transaction_hour"
+    )[TARGET].mean() * 100
+
+    plt.figure(figsize=(9, 5))
+
+    fraud_by_hour.plot(
+        marker="o"
     )
 
-    save_chart(
-        plots.amount_by_class(data),
-        "amount_distribution.png"
+    plt.title("Fraud Percentage by Transaction Hour")
+
+    plt.xlabel("Transaction Hour")
+
+    plt.ylabel("Fraud Percentage")
+
+    plt.xticks(range(0, 24))
+
+    plt.tight_layout()
+
+    plt.savefig(
+        REPORTS / "fraud_by_hour.png"
     )
 
-    save_chart(
-        plots.target_correlation(
-            pd.Series(results["corr_with_class"])
-        ),
-        "target_correlation.png"
+    plt.close()
+
+    # 4. Fraud rate by transaction type
+    fraud_by_type = (
+        df.groupby("transaction_type")[TARGET]
+        .mean()
+        .sort_values(ascending=False) * 100
     )
 
-    # Use a smaller set of features to keep the heatmap readable
-    heatmap_features = FEATURES[:10]
+    plt.figure(figsize=(10, 6))
 
-    save_chart(
-        plots.heatmap(data, heatmap_features),
-        "correlation_heatmap.png"
+    fraud_by_type.plot(
+        kind="bar"
     )
 
-    save_chart(
-        plots.iqr_outliers(results["iqr_outliers_per_feature"]),
-        "iqr_outliers.png"
+    plt.title("Fraud Percentage by Transaction Type")
+
+    plt.xlabel("Transaction Type")
+
+    plt.ylabel("Fraud Percentage")
+
+    plt.xticks(rotation=45, ha="right")
+
+    plt.tight_layout()
+
+    plt.savefig(
+        REPORTS / "fraud_by_transaction_type.png"
     )
+
+    plt.close()
+
+    print("\nEDA completed.")
+
+    print("Charts saved in:", REPORTS)
+
+    return df
 
 
 if __name__ == "__main__":
 
-    from config import ARTIFACTS
-
-    train_data = pd.read_csv(ARTIFACTS / "train.csv")
-
-    results = compute_eda(train_data)
-
-    print_summary(results)
-
-    save_eda_charts(train_data, results)
+    compute_eda()

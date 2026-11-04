@@ -1,154 +1,80 @@
 
-import numpy as np
+import joblib
 import pandas as pd
 
 from sklearn.inspection import permutation_importance
+from sklearn.model_selection import train_test_split
 
-from config import FEATURES, SEED
+from config import (
+    MODEL_FILE,
+    REPORTS,
+    SEED
+)
+
+from data_prep import prepare_data
 
 
-# STEP 1: PERMUTATION FEATURE IMPORTANCE
+def explain_model():
 
-def permutation_importances(model, X, y):
+    print("Loading trained model...")
 
-    result = permutation_importance(
-        model,
-        X,
-        y,
-        scoring="average_precision",
-        n_repeats=5,
+    model = joblib.load(MODEL_FILE)
+
+    X_train, X_test, y_train, y_test = prepare_data()
+
+    # Use a smaller stratified sample for explanation
+    sample_size = min(
+        5000,
+        len(X_test)
+    )
+
+    X_sample, _, y_sample, _ = train_test_split(
+        X_test,
+        y_test,
+        train_size=sample_size,
+        stratify=y_test,
         random_state=SEED
     )
 
-    importance = {}
+    print("Calculating permutation importance...")
 
-    for i, feature in enumerate(FEATURES):
-
-        importance[feature] = {
-            "mean": float(result.importances_mean[i]),
-            "std": float(result.importances_std[i])
-        }
-
-    return dict(
-        sorted(
-            importance.items(),
-            key=lambda item: item[1]["mean"],
-            reverse=True
-        )
+    results = permutation_importance(
+        model,
+        X_sample,
+        y_sample,
+        scoring="average_precision",
+        n_repeats=3,
+        random_state=SEED,
+        n_jobs=1
     )
 
+    importance_df = pd.DataFrame({
 
-# STEP 2: EXPLAIN ONE TRANSACTION
+        "feature": X_sample.columns,
 
-def occlusion_explain(model, row, medians):
+        "importance_mean": results.importances_mean,
 
-    if len(row) != 1:
-        raise ValueError("Provide exactly one transaction")
+        "importance_std": results.importances_std
 
-    missing = [
-        feature for feature in FEATURES
-        if feature not in row.columns
-    ]
+    })
 
-    if missing:
-        raise ValueError(f"Missing features: {missing}")
-
-    original_probability = model.predict_proba(
-        row[FEATURES]
-    )[0, 1]
-
-    explanation = {}
-
-    for feature in FEATURES:
-
-        changed_row = row[FEATURES].copy()
-
-        changed_row.loc[:, feature] = medians[feature]
-
-        new_probability = model.predict_proba(
-            changed_row
-        )[0, 1]
-
-        explanation[feature] = float(
-            original_probability - new_probability
-        )
-
-    explanation = pd.Series(explanation)
-
-    explanation = explanation.reindex(
-        explanation.abs().sort_values(
-            ascending=False
-        ).index
+    importance_df = importance_df.sort_values(
+        by="importance_mean",
+        ascending=False
     )
 
-    return float(original_probability), explanation
-
-
-# STEP 3: COST CURVE
-
-def cost_curve(
-    y,
-    scores,
-    cost_missed_fraud,
-    cost_false_alarm
-):
-
-    y = np.asarray(y)
-    scores = np.asarray(scores)
-
-    thresholds = np.linspace(0.01, 0.99, 99)
-
-    costs = []
-
-    for threshold in thresholds:
-
-        missed_fraud = (
-            (scores < threshold) & (y == 1)
-        ).sum()
-
-        false_alarms = (
-            (scores >= threshold) & (y == 0)
-        ).sum()
-
-        total_cost = (
-            cost_missed_fraud * missed_fraud
-            + cost_false_alarm * false_alarms
-        )
-
-        costs.append(total_cost)
-
-    best_index = np.argmin(costs)
-
-    return (
-        thresholds,
-        np.array(costs),
-        float(thresholds[best_index])
+    importance_df.to_csv(
+        REPORTS / "feature_importance.csv",
+        index=False
     )
 
+    print("\nFeature importance:")
 
-# STEP 4: METRICS AT A SELECTED THRESHOLD
+    print(importance_df)
 
-def metrics_at(y, scores, threshold):
+    print("\nResults saved in:", REPORTS)
 
-    y = np.asarray(y)
-    scores = np.asarray(scores)
 
-    predictions = scores >= threshold
+if __name__ == "__main__":
 
-    true_positive = (
-        (predictions == True) & (y == 1)
-    ).sum()
-
-    actual_fraud = (y == 1).sum()
-
-    flagged = predictions.sum()
-
-    recall = true_positive / max(actual_fraud, 1)
-
-    precision = true_positive / max(flagged, 1)
-
-    return {
-        "recall": float(recall),
-        "precision": float(precision),
-        "flagged": int(flagged)
-    }
+    explain_model()
