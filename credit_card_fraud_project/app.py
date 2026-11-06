@@ -2,13 +2,11 @@ import json
 import joblib
 import streamlit as st
 import pandas as pd
-import matplotlib.pyplot as plt
 
 from pathlib import Path
-from datetime import date, time, datetime
+from datetime import date, datetime
 
 from config import (
-    ARTIFACTS,
     REPORTS,
     MODEL_FILE,
     METRICS_FILE,
@@ -44,8 +42,6 @@ st.markdown("""
     color: #f1f5f9;
 }
 
-/* Main headings */
-
 h1 {
     color: #ffffff !important;
     font-weight: 800 !important;
@@ -56,13 +52,9 @@ h2, h3 {
     font-weight: 700 !important;
 }
 
-/* Normal text */
-
 p, label, li {
     color: #dbeafe;
 }
-
-/* Sidebar */
 
 section[data-testid="stSidebar"] {
     background-color: #101b30;
@@ -78,8 +70,6 @@ div[data-testid="stMetric"] {
     border-radius: 12px;
 }
 
-/* Metric values */
-
 div[data-testid="stMetricValue"] {
     color: #38bdf8;
     font-weight: 800;
@@ -87,20 +77,34 @@ div[data-testid="stMetricValue"] {
 
 /* Buttons */
 
-.stButton > button {
-    background: linear-gradient(90deg, #2563eb, #0891b2);
-    color: white;
-    border: none;
-    border-radius: 9px;
-    padding: 10px 20px;
-    font-weight: 700;
-    transition: 0.3s;
+.stButton > button,
+.stFormSubmitButton > button,
+.stDownloadButton > button {
+
+    background: linear-gradient(90deg, #2563eb, #0891b2) !important;
+    color: #ffffff !important;
+    border: 1px solid #38bdf8 !important;
+    border-radius: 10px !important;
+    padding: 10px 20px !important;
+    font-weight: 700 !important;
+    transition: all 0.25s ease-in-out !important;
 }
 
-.stButton > button:hover {
-    background: linear-gradient(90deg, #1d4ed8, #0e7490);
-    border: 1px solid #7dd3fc;
-    color: white;
+.stButton > button p,
+.stFormSubmitButton > button p,
+.stDownloadButton > button p {
+    color: #ffffff !important;
+    font-weight: 700 !important;
+}
+
+.stButton > button:hover,
+.stFormSubmitButton > button:hover,
+.stDownloadButton > button:hover {
+
+    background: linear-gradient(90deg, #1d4ed8, #0e7490) !important;
+    color: #ffffff !important;
+    border: 1px solid #7dd3fc !important;
+    transform: translateY(-2px);
 }
 
 /* Input fields */
@@ -110,6 +114,7 @@ div[data-testid="stMetricValue"] {
 .stDateInput input,
 .stTimeInput input,
 .stTextArea textarea {
+
     background-color: #172640;
     color: white;
     border-radius: 8px;
@@ -133,13 +138,11 @@ button[data-baseweb="tab"][aria-selected="true"] {
     color: #38bdf8;
 }
 
-/* Horizontal separators */
-
 hr {
     border-color: #29466d;
 }
 
-/* Custom information cards */
+/* Result cards */
 
 .info-card {
     background-color: #172640;
@@ -163,6 +166,16 @@ hr {
     padding: 20px;
 }
 
+/* Comparison section */
+
+.comparison-card {
+    background-color: #172640;
+    border: 1px solid #29466d;
+    border-radius: 12px;
+    padding: 16px;
+    margin-bottom: 15px;
+}
+
 </style>
 """, unsafe_allow_html=True)
 
@@ -172,28 +185,27 @@ hr {
 # ============================================================
 
 st.markdown("""
-<div style="
+<style>
+.main-header {
     background: linear-gradient(110deg, #172554, #164e63);
     padding: 25px;
     border-radius: 15px;
     border: 1px solid #2563eb;
     margin-bottom: 25px;
-">
-    <h1 style="color: white; margin-bottom: 8px;">
-        🛡️ Fraud Detection Intelligence
-    </h1>
+}
 
-    <p style="
-        color: #bae6fd;
-        font-size: 17px;
-        margin-bottom: 0;
-    ">
-        Intelligent transaction analysis and machine learning-based
-        fraud prediction.
-    </p>
+.main-header h1 {
+    color: #ffffff !important;
+    font-size: 34px !important;
+    font-weight: 800 !important;
+    margin: 0 !important;
+}
+</style>
+
+<div class="main-header">
+    <h1>🛡️ Fraud Detection Intelligence</h1>
 </div>
 """, unsafe_allow_html=True)
-
 
 # ============================================================
 # 4. LOAD PROJECT FILES
@@ -274,6 +286,7 @@ st.sidebar.markdown("""
 <h2 style="color:#38bdf8;">
 🛡️ Fraud Detection
 </h2>
+
 <p style="color:#94a3b8;">
 Machine Learning Dashboard
 </p>
@@ -310,11 +323,8 @@ st.sidebar.markdown("""
 st.sidebar.markdown("---")
 
 if model is None:
-
     st.sidebar.error("Saved model not found.")
-
 else:
-
     st.sidebar.success("ML model loaded successfully.")
 
 
@@ -332,9 +342,6 @@ def show_metric(label, value, help_text=None):
 
 
 def get_category_options(feature):
-    """
-    Get valid categorical values from the trained OneHotEncoder.
-    """
 
     try:
 
@@ -363,9 +370,6 @@ def get_category_options(feature):
 
 
 def predict_transaction(transaction_df, threshold=0.50):
-    """
-    Predict fraud probability and classification.
-    """
 
     probability = model.predict_proba(transaction_df)[0][1]
 
@@ -375,9 +379,6 @@ def predict_transaction(transaction_df, threshold=0.50):
 
 
 def show_image(image_name, caption):
-    """
-    Display a report image if it exists.
-    """
 
     image_path = REPORTS / image_name
 
@@ -395,7 +396,212 @@ def show_image(image_name, caption):
 
 
 # ============================================================
-# 7. OVERVIEW PAGE
+# 7. INTERACTIVE MODEL COMPARISON TABLE
+# ============================================================
+
+def show_model_comparison_table(data, key_prefix="comparison"):
+
+    if data is None or data.empty:
+
+        st.warning("Model comparison data is not available.")
+        return
+
+    df = data.copy()
+
+    # Normalize metric names from different source files.
+
+    rename_columns = {
+        "average_precision": "PR-AUC",
+        "pr_auc": "PR-AUC",
+        "accuracy": "Accuracy",
+        "precision": "Precision",
+        "recall": "Recall",
+        "f1_score": "F1-Score",
+        "roc_auc": "ROC-AUC"
+    }
+
+    df = df.rename(columns=rename_columns)
+
+    # Make sure the model names are displayed as a column.
+
+    if df.index.name is None:
+        df.index.name = "Model"
+
+    df.index = df.index.astype(str)
+    df.index.name = "Model"
+
+    metric_columns = [
+        column
+        for column in [
+            "Accuracy",
+            "Precision",
+            "Recall",
+            "F1-Score",
+            "ROC-AUC",
+            "PR-AUC"
+        ]
+        if column in df.columns
+    ]
+
+    if not metric_columns:
+
+        st.warning("No recognized performance metrics were found.")
+        return
+
+    # Convert numeric metric columns safely.
+
+    for column in metric_columns:
+
+        df[column] = pd.to_numeric(
+            df[column],
+            errors="coerce"
+        )
+
+    # Search and sorting controls.
+
+    st.markdown("#### 🔎 Explore Model Results")
+
+    search_col, sort_col, order_col = st.columns([2, 2, 1])
+
+    with search_col:
+
+        search_text = st.text_input(
+            "Search model",
+            placeholder="Enter model name...",
+            key=f"{key_prefix}_search"
+        )
+
+    with sort_col:
+
+        selected_metric = st.selectbox(
+            "Rank models by",
+            metric_columns,
+            index=(
+                metric_columns.index("PR-AUC")
+                if "PR-AUC" in metric_columns
+                else 0
+            ),
+            key=f"{key_prefix}_metric"
+        )
+
+    with order_col:
+
+        sort_order = st.selectbox(
+            "Order",
+            ["Highest first", "Lowest first"],
+            key=f"{key_prefix}_order"
+        )
+
+    filtered_df = df.copy()
+
+    # Filter by model name.
+
+    if search_text:
+
+        filtered_df = filtered_df[
+            filtered_df.index.str.contains(
+                search_text,
+                case=False,
+                na=False
+            )
+        ]
+
+    ascending = sort_order == "Lowest first"
+
+    filtered_df = filtered_df.sort_values(
+        by=selected_metric,
+        ascending=ascending,
+        na_position="last"
+    )
+
+    if filtered_df.empty:
+
+        st.warning("No models match your search.")
+        return
+
+    st.caption(
+        f"Showing {len(filtered_df)} of {len(df)} models. "
+        "Click any column heading to sort the table."
+    )
+
+    # Display percentage values.
+
+    display_df = filtered_df.copy() * 100
+
+    # Colour the metric cells and highlight the best result.
+
+    styled_df = (
+        display_df.style
+        .format("{:.2f}%")
+        .background_gradient(
+            cmap="RdYlGn",
+            subset=metric_columns,
+            axis=0
+        )
+    )
+
+    # Highlight the highest value in every metric column.
+
+    styled_df = styled_df.highlight_max(
+        subset=metric_columns,
+        color="#14532d"
+    )
+
+    st.dataframe(
+        styled_df,
+        use_container_width=True,
+        height=320,
+        key=f"{key_prefix}_table"
+    )
+
+    st.caption(
+        "Green indicates relatively stronger values and red indicates "
+        "relatively weaker values within each metric column. "
+        "These colours do not indicate whether a model is suitable "
+        "for real-world deployment."
+    )
+
+    # Dynamic comparison chart.
+
+    st.markdown("#### 📊 Model Performance Chart")
+
+    chart_data = filtered_df[[selected_metric]].sort_values(
+        selected_metric,
+        ascending=True
+    )
+
+    chart_data = chart_data.rename(
+        columns={selected_metric: f"{selected_metric} (%)"}
+    ) * 100
+
+    st.bar_chart(
+        chart_data,
+        horizontal=True
+    )
+
+
+def show_metrics_comparison_from_json(all_results, key_prefix):
+
+    if not all_results:
+
+        st.warning("Model evaluation results are not available.")
+        return
+
+    results_df = pd.DataFrame.from_dict(
+        all_results,
+        orient="index"
+    )
+
+    results_df.index.name = "Model"
+
+    show_model_comparison_table(
+        results_df,
+        key_prefix=key_prefix
+    )
+
+
+# ============================================================
+# 8. OVERVIEW PAGE
 # ============================================================
 
 if page == "Overview":
@@ -416,30 +622,33 @@ if page == "Overview":
 
     else:
 
-        best_model = metrics.get("best_model", "Not available")
+        best_model = metrics.get(
+            "best_model",
+            "Not available"
+        )
 
         evaluation_size = metrics.get(
             "evaluation_sample_size",
             "Not available"
         )
 
-        # Get metrics belonging to the selected best model
-        results = metrics.get("metrics", {}).get(best_model, {})
+        results = metrics.get(
+            "metrics", {}
+        ).get(
+            best_model, {}
+        )
 
         st.markdown("### 🏆 Model Summary")
 
         col1, col2, col3 = st.columns(3)
 
         with col1:
-
             show_metric("Best Model", best_model)
 
         with col2:
-
-            show_metric("Evaluation Samples", f"{evaluation_size:,}")
+            show_metric("Evaluation Samples", evaluation_size)
 
         with col3:
-
             show_metric(
                 "PR-AUC",
                 f"{results.get('pr_auc', 0):.4f}"
@@ -447,98 +656,42 @@ if page == "Overview":
 
         st.markdown("---")
 
-        # ====================================================
-        # ALL MODEL RESULTS - NEW ADDITION
-        # ====================================================
-
-        st.markdown("### 🤖 Performance of All Machine Learning Models")
+        st.markdown(
+            "### 🤖 Performance of All Machine Learning Models"
+        )
 
         all_results = metrics.get("metrics", {})
 
-        if all_results:
-
-            results_df = pd.DataFrame.from_dict(
-                all_results,
-                orient="index"
-            )
-
-            results_df.index.name = "Model"
-
-            percentage_columns = [
-                "accuracy",
-                "precision",
-                "recall",
-                "f1_score",
-                "roc_auc",
-                "pr_auc"
-            ]
-
-            # Convert metric values into percentages
-            results_df[percentage_columns] = (
-                results_df[percentage_columns] * 100
-            )
-
-            results_df = results_df.rename(columns={
-                "accuracy": "Accuracy (%)",
-                "precision": "Precision (%)",
-                "recall": "Recall (%)",
-                "f1_score": "F1-Score (%)",
-                "roc_auc": "ROC-AUC (%)",
-                "pr_auc": "PR-AUC (%)"
-            })
-
-            st.dataframe(
-                results_df.style
-                .format("{:.2f}%")
-                .highlight_max(
-                    subset=["PR-AUC (%)"],
-                    color="#14532d"
-                ),
-                use_container_width=True
-            )
-
-            st.caption(
-                "The highest PR-AUC is highlighted because PR-AUC "
-                "is the metric currently used for model selection."
-            )
-
-        else:
-
-            st.warning("Model evaluation results are not available.")
+        show_metrics_comparison_from_json(
+            all_results,
+            "overview"
+        )
 
         st.markdown("---")
-
-        # ====================================================
-        # SELECTED MODEL PERFORMANCE
-        # ====================================================
 
         st.markdown("### 📈 Selected Model Performance")
 
         col1, col2, col3, col4 = st.columns(4)
 
         with col1:
-
             show_metric(
                 "Accuracy",
                 f"{results.get('accuracy', 0):.2%}"
             )
 
         with col2:
-
             show_metric(
                 "Precision",
                 f"{results.get('precision', 0):.2%}"
             )
 
         with col3:
-
             show_metric(
                 "Recall",
                 f"{results.get('recall', 0):.2%}"
             )
 
         with col4:
-
             show_metric(
                 "F1 Score",
                 f"{results.get('f1_score', 0):.4f}"
@@ -551,14 +704,12 @@ if page == "Overview":
         col1, col2 = st.columns(2)
 
         with col1:
-
             show_metric(
                 "ROC-AUC",
                 f"{results.get('roc_auc', 0):.4f}"
             )
 
         with col2:
-
             show_metric(
                 "PR-AUC",
                 f"{results.get('pr_auc', 0):.4f}"
@@ -596,7 +747,6 @@ if page == "Overview":
     if available_reports:
 
         for report in available_reports:
-
             st.write(f"✅ {report}")
 
     else:
@@ -605,7 +755,7 @@ if page == "Overview":
 
 
 # ============================================================
-# 8. DATA ANALYSIS PAGE
+# 9. DATA ANALYSIS PAGE
 # ============================================================
 
 elif page == "Data Analysis":
@@ -657,7 +807,7 @@ elif page == "Data Analysis":
 
 
 # ============================================================
-# 9. MODEL COMPARISON PAGE
+# 10. MODEL COMPARISON PAGE
 # ============================================================
 
 elif page == "Model Comparison":
@@ -665,8 +815,8 @@ elif page == "Model Comparison":
     st.title("🤖 Machine Learning Model Comparison")
 
     st.write(
-        "Compare the performance of the machine learning "
-        "algorithms trained in this project."
+        "Explore and compare the performance of all trained "
+        "machine-learning algorithms."
     )
 
     if comparison is None:
@@ -677,29 +827,16 @@ elif page == "Model Comparison":
 
     else:
 
-        st.markdown("### Performance Comparison")
+        st.markdown("### 📋 Interactive Performance Comparison")
 
-        st.dataframe(
-            comparison.style.format("{:.4f}"),
-            use_container_width=True
+        show_model_comparison_table(
+            comparison,
+            "model_comparison"
         )
-
-        if "average_precision" in comparison.columns:
-
-            st.markdown("### PR-AUC Comparison")
-
-            chart_data = comparison[
-                ["average_precision"]
-            ].sort_values(
-                "average_precision",
-                ascending=True
-            )
-
-            st.bar_chart(chart_data)
 
         st.markdown("---")
 
-        st.markdown("### Model Comparison Chart")
+        st.markdown("### 📈 Saved Model Comparison Chart")
 
         show_image(
             "model_comparison.png",
@@ -715,7 +852,7 @@ elif page == "Model Comparison":
 
 
 # ============================================================
-# 10. EXPLAINABILITY PAGE
+# 11. EXPLAINABILITY PAGE
 # ============================================================
 
 elif page == "Explainability":
@@ -743,38 +880,41 @@ elif page == "Explainability":
             use_container_width=True
         )
 
-        possible_columns = [
-            column for column in feature_importance.columns
-            if column in [
-                "feature",
-                "importance",
-                "mean_importance",
-                "importance_mean"
-            ]
-        ]
+        if (
+            "feature" in feature_importance.columns
+            and "mean_importance" in feature_importance.columns
+        ):
 
-        if len(possible_columns) >= 2:
-
-            importance_column = next(
-                (
-                    column for column in possible_columns
-                    if column != "feature"
-                ),
-                None
-            )
-
-            if importance_column:
-
-                chart_data = feature_importance.set_index(
-                    "feature"
-                )[[importance_column]].sort_values(
-                    importance_column,
+            chart_data = (
+                feature_importance
+                .set_index("feature")[["mean_importance"]]
+                .sort_values(
+                    "mean_importance",
                     ascending=True
                 )
+            )
 
-                st.markdown("### Importance Chart")
+            st.markdown("### Importance Chart")
 
-                st.bar_chart(chart_data)
+            st.bar_chart(chart_data)
+
+        elif (
+            "feature" in feature_importance.columns
+            and "importance" in feature_importance.columns
+        ):
+
+            chart_data = (
+                feature_importance
+                .set_index("feature")[["importance"]]
+                .sort_values(
+                    "importance",
+                    ascending=True
+                )
+            )
+
+            st.markdown("### Importance Chart")
+
+            st.bar_chart(chart_data)
 
         st.info(
             "Feature importance describes how much model performance "
@@ -784,7 +924,7 @@ elif page == "Explainability":
 
 
 # ============================================================
-# 11. FRAUD PREDICTION PAGE
+# 12. FRAUD PREDICTION PAGE
 # ============================================================
 
 elif page == "Fraud Prediction":
@@ -792,8 +932,8 @@ elif page == "Fraud Prediction":
     st.title("🚨 Fraud Prediction Center")
 
     st.write(
-        "Enter transaction details to obtain an immediate "
-        "prediction from the saved machine learning model."
+        "Enter transaction details to obtain a prediction "
+        "from the saved machine-learning model."
     )
 
     if model is None:
@@ -812,7 +952,7 @@ elif page == "Fraud Prediction":
         )
 
         # ----------------------------------------------------
-        # SINGLE TRANSACTION PREDICTION
+        # SINGLE TRANSACTION
         # ----------------------------------------------------
 
         with prediction_tab:
@@ -820,9 +960,9 @@ elif page == "Fraud Prediction":
             st.markdown("### Enter Transaction Information")
 
             st.caption(
-                "Enter the transaction details below. "
-                "The transaction date and time are used to "
-                "calculate the model's date and hour features."
+                "Enter transaction details below. The transaction "
+                "date and time are used to calculate the model's "
+                "date and hour features."
             )
 
             with st.form("transaction_form"):
@@ -889,17 +1029,11 @@ elif page == "Fraud Prediction":
                         "merchant_category"
                     )
 
-                    state_options = get_category_options(
-                        "state"
-                    )
+                    state_options = get_category_options("state")
 
-                    channel_options = get_category_options(
-                        "channel"
-                    )
+                    channel_options = get_category_options("channel")
 
-                    kyc_options = get_category_options(
-                        "kyc_status"
-                    )
+                    kyc_options = get_category_options("kyc_status")
 
                     account_type = st.selectbox(
                         "Account Type",
@@ -970,7 +1104,8 @@ elif page == "Fraud Prediction":
 
                 submit_prediction = st.form_submit_button(
                     "🔍 Analyze Transaction",
-                    use_container_width=True
+                    use_container_width=True,
+                    type="primary"
                 )
 
             if submit_prediction:
@@ -1005,7 +1140,6 @@ elif page == "Fraud Prediction":
                     )
 
                     if has_loan == 0:
-
                         loan_type = None
 
                     transaction_data = {
@@ -1107,9 +1241,7 @@ elif page == "Fraud Prediction":
 
                     except Exception as error:
 
-                        st.error(
-                            f"Prediction failed: {error}"
-                        )
+                        st.error(f"Prediction failed: {error}")
 
         # ----------------------------------------------------
         # BATCH PREDICTION
@@ -1126,8 +1258,8 @@ elif page == "Fraud Prediction":
 
             st.info(
                 "Your CSV must contain all 15 columns from the "
-                "model's FEATURES list. It must include the derived "
-                "transaction_month and transaction_day_of_week columns."
+                "model's FEATURES list, including transaction_month "
+                "and transaction_day_of_week."
             )
 
             uploaded_file = st.file_uploader(
@@ -1151,7 +1283,8 @@ elif page == "Fraud Prediction":
                     batch_df = pd.read_csv(uploaded_file)
 
                     missing_columns = [
-                        column for column in FEATURES
+                        column
+                        for column in FEATURES
                         if column not in batch_df.columns
                     ]
 
@@ -1173,7 +1306,8 @@ elif page == "Fraud Prediction":
 
                         if st.button(
                             "🚀 Predict All Transactions",
-                            use_container_width=True
+                            use_container_width=True,
+                            type="primary"
                         ):
 
                             input_df = batch_df[FEATURES].copy()
@@ -1195,17 +1329,12 @@ elif page == "Fraud Prediction":
 
                             output_df = batch_df.copy()
 
-                            output_df["fraud_probability"] = (
-                                probabilities
-                            )
+                            output_df["fraud_probability"] = probabilities
 
-                            output_df["predicted"] = (
-                                predictions_batch
-                            )
+                            output_df["predicted"] = predictions_batch
 
                             output_df["prediction_result"] = (
-                                output_df["predicted"]
-                                .map({
+                                output_df["predicted"].map({
                                     0: "Legitimate",
                                     1: "Potential Fraud"
                                 })
@@ -1235,9 +1364,7 @@ elif page == "Fraud Prediction":
 
                                 show_metric(
                                     "Legitimate",
-                                    int(
-                                        (predictions_batch == 0).sum()
-                                    )
+                                    int((predictions_batch == 0).sum())
                                 )
 
                             st.dataframe(
@@ -1254,7 +1381,8 @@ elif page == "Fraud Prediction":
                                 data=csv_data,
                                 file_name="fraud_predictions.csv",
                                 mime="text/csv",
-                                use_container_width=True
+                                use_container_width=True,
+                                type="primary"
                             )
 
                 except Exception as error:
@@ -1265,7 +1393,7 @@ elif page == "Fraud Prediction":
 
 
 # ============================================================
-# 12. METRICS GUIDE PAGE
+# 13. METRICS GUIDE PAGE
 # ============================================================
 
 elif page == "Metrics Guide":
@@ -1326,7 +1454,7 @@ elif page == "Metrics Guide":
 
 
 # ============================================================
-# 13. FOOTER
+# 14. FOOTER
 # ============================================================
 
 st.markdown("---")
