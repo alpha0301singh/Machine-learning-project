@@ -595,6 +595,7 @@ def main():
     print("5.", PREDICTIONS_FILE)
 
 
-if _name_ == "_main_":
+if __name__ == "__main__":
 
     main()
+    
