@@ -1,6 +1,7 @@
 import json
 import joblib
 import gc
+
 import numpy as np
 import pandas as pd
 
@@ -32,10 +33,14 @@ from config import (
 from data_prep import prepare_data
 
 from models import (
-    get_model_experiments,
+    get_final_models,
     build_pipeline
 )
 
+
+# ----------------------------------------
+# MODELS THAT USE BALANCED TRAINING DATA
+# ----------------------------------------
 
 DISTANCE_BASED_MODELS = [
     "KNN",
@@ -43,6 +48,10 @@ DISTANCE_BASED_MODELS = [
     "Naive Bayes"
 ]
 
+
+# ----------------------------------------
+# CREATE BALANCED TRAINING SAMPLE
+# ----------------------------------------
 
 def make_balanced_sample(X, y):
 
@@ -95,6 +104,10 @@ def make_balanced_sample(X, y):
     return balanced_data, y_sample
 
 
+# ----------------------------------------
+# CREATE EVALUATION SAMPLE
+# ----------------------------------------
+
 def make_evaluation_sample(X, y):
 
     sample_size = min(
@@ -116,6 +129,23 @@ def make_evaluation_sample(X, y):
 
     return X_sample, y_sample
 
+
+# ----------------------------------------
+# GET TRAINING DATA
+# ----------------------------------------
+
+def get_training_data(model_name, X, y):
+
+    if model_name in DISTANCE_BASED_MODELS:
+
+        return make_balanced_sample(X, y)
+
+    return X, y
+
+
+# ----------------------------------------
+# EVALUATE MODEL
+# ----------------------------------------
 
 def evaluate_model(model, X, y):
 
@@ -162,20 +192,15 @@ def evaluate_model(model, X, y):
     return results, predictions, probabilities
 
 
-def get_training_data(model_name, X, y):
-
-    if model_name in DISTANCE_BASED_MODELS:
-
-        return make_balanced_sample(X, y)
-
-    return X, y
-
+# ----------------------------------------
+# MAIN FUNCTION
+# ----------------------------------------
 
 def main():
 
     print("\n" + "=" * 65)
 
-    print("FRAUD DETECTION - SECOND HYPERPARAMETER EXPERIMENT")
+    print("CREDIT CARD FRAUD DETECTION - FINAL MODEL TRAINING")
 
     print("=" * 65)
 
@@ -187,219 +212,32 @@ def main():
 
     X_train, X_test, y_train, y_test = prepare_data()
 
-    print("Training data:", X_train.shape)
+    print("\nTraining data:", X_train.shape)
 
     print("Testing data:", X_test.shape)
 
     # --------------------------------
-    # STEP 2: VALIDATION SPLIT
+    # STEP 2: CREATE TEST EVALUATION DATA
     # --------------------------------
 
-    print("\nCreating validation data...")
-
-    X_fit_base, X_validation, y_fit_base, y_validation = (
-        train_test_split(
-            X_train,
-            y_train,
-            test_size=0.20,
-            stratify=y_train,
-            random_state=SEED
-        )
-    )
-
-    X_validation_eval, y_validation_eval = make_evaluation_sample(
-        X_validation,
-        y_validation
-    )
-
-    print("Training portion:", X_fit_base.shape)
-
-    print("Validation sample:", X_validation_eval.shape)
-
-    # --------------------------------
-    # STEP 3: TEST DATA
-    # --------------------------------
+    print("\nPreparing test evaluation data...")
 
     X_test_eval, y_test_eval = make_evaluation_sample(
         X_test,
         y_test
     )
 
-    print("Final test sample:", X_test_eval.shape)
+    print("Test evaluation sample:", X_test_eval.shape)
+
+    print("\nFraud cases in evaluation data:")
+
+    print(pd.Series(y_test_eval).value_counts())
 
     # --------------------------------
-    # STEP 4: LOAD EXPERIMENTS
+    # STEP 3: LOAD FINAL MODELS
     # --------------------------------
 
-    experiments = get_model_experiments()
-
-    all_results = []
-
-    best_settings = {}
-
-    validation_metrics = {}
-
-    # --------------------------------
-    # STEP 5: EXPERIMENT WITH PARAMETERS
-    # --------------------------------
-
-    total_experiments = sum(
-        len(candidates)
-        for candidates in experiments.values()
-    )
-
-    experiment_number = 0
-
-    print("\nTotal experiments:", total_experiments)
-
-    for model_name, candidates in experiments.items():
-
-        print("\n" + "=" * 65)
-
-        print("MODEL:", model_name)
-
-        print("=" * 65)
-
-        model_results = []
-
-        for setting_name, classifier in candidates:
-
-            experiment_number += 1
-
-            print("\nExperiment:", experiment_number, "/", total_experiments)
-
-            print("Model:", model_name)
-
-            print("Settings:", setting_name)
-
-            X_fit, y_fit = get_training_data(
-                model_name,
-                X_fit_base,
-                y_fit_base
-            )
-
-            print("Training sample:", X_fit.shape)
-
-            pipeline = build_pipeline(
-                clone(classifier)
-            )
-
-            pipeline.fit(
-                X_fit,
-                y_fit
-            )
-
-            results, _, _ = evaluate_model(
-                pipeline,
-                X_validation_eval,
-                y_validation_eval
-            )
-
-            row = {
-
-                "Model": model_name,
-
-                "Settings": setting_name,
-
-                **results
-
-            }
-
-            model_results.append(row)
-
-            all_results.append(row)
-
-            print("\nValidation metrics:")
-
-            for metric, value in results.items():
-
-                print(f"{metric}: {value:.4f}")
-
-            del pipeline
-            del X_fit
-            del y_fit
-
-            gc.collect()
-
-        # Choose settings using validation PR-AUC
-        best_result = max(
-            model_results,
-            key=lambda item: item["pr_auc"]
-        )
-
-        best_settings[model_name] = best_result["Settings"]
-
-        validation_metrics[model_name] = {
-            metric: best_result[metric]
-            for metric in [
-                "accuracy",
-                "precision",
-                "recall",
-                "f1_score",
-                "roc_auc",
-                "pr_auc"
-            ]
-        }
-
-        print("\nBest configuration:", best_settings[model_name])
-
-        print(
-            "Best validation PR-AUC:",
-            round(best_result["pr_auc"], 4)
-        )
-
-    # --------------------------------
-    # STEP 6: SAVE EXPERIMENT RESULTS
-    # --------------------------------
-
-    experiment_df = pd.DataFrame(all_results)
-
-    experiment_file = Path(COMPARISON_FILE).with_name(
-        "hyperparameter_experiments.csv"
-    )
-
-    experiment_file.parent.mkdir(
-        parents=True,
-        exist_ok=True
-    )
-
-    experiment_df.to_csv(
-        experiment_file,
-        index=False
-    )
-
-    print("\nAll experiment results saved:", experiment_file)
-
-    # --------------------------------
-    # STEP 7: SELECT BEST MODEL
-    # --------------------------------
-
-    best_model_name = max(
-        validation_metrics,
-        key=lambda name: validation_metrics[name]["pr_auc"]
-    )
-
-    print("\n" + "=" * 65)
-
-    print("BEST MODEL SELECTED")
-
-    print("=" * 65)
-
-    print("Best model:", best_model_name)
-
-    print(
-        "Validation PR-AUC:",
-        round(
-            validation_metrics[best_model_name]["pr_auc"],
-            4
-        )
-    )
-
-    # --------------------------------
-    # STEP 8: FINAL TRAINING
-    # --------------------------------
-
-    print("\nRetraining selected configurations...")
+    models = get_final_models()
 
     final_test_results = {}
 
@@ -409,27 +247,22 @@ def main():
 
     best_probabilities = None
 
-    for model_name, candidates in experiments.items():
+    # Selected from the completed validation experiments.
+    best_model_name = "Random Forest"
 
-        print("\nTraining final model:", model_name)
+    # --------------------------------
+    # STEP 4: TRAIN AND EVALUATE ALL MODELS
+    # --------------------------------
 
-        selected_setting = best_settings[model_name]
+    for model_name, (settings, classifier) in models.items():
 
-        selected_classifier = None
+        print("\n" + "=" * 65)
 
-        for setting_name, classifier in candidates:
+        print("MODEL:", model_name)
 
-            if setting_name == selected_setting:
+        print("SETTINGS:", settings)
 
-                selected_classifier = classifier
-
-                break
-
-        if selected_classifier is None:
-
-            raise ValueError(
-                "Selected configuration not found."
-            )
+        print("=" * 65)
 
         X_fit, y_fit = get_training_data(
             model_name,
@@ -437,14 +270,20 @@ def main():
             y_train
         )
 
+        print("\nTraining sample:", X_fit.shape)
+
         pipeline = build_pipeline(
-            clone(selected_classifier)
+            clone(classifier)
         )
+
+        print("Training model...")
 
         pipeline.fit(
             X_fit,
             y_fit
         )
+
+        print("Evaluating model...")
 
         results, predictions, probabilities = evaluate_model(
             pipeline,
@@ -454,11 +293,13 @@ def main():
 
         final_test_results[model_name] = results
 
-        print("\nFinal test metrics:")
+        print("\nTest results:")
 
         for metric, value in results.items():
 
             print(f"{metric}: {value:.4f}")
+
+        # Keep the selected Random Forest model.
 
         if model_name == best_model_name:
 
@@ -468,22 +309,24 @@ def main():
 
             best_probabilities = probabilities
 
-        else:
-
-            del pipeline
-
         del X_fit
         del y_fit
+
+        if model_name != best_model_name:
+
+            del pipeline
 
         gc.collect()
 
     # --------------------------------
-    # STEP 9: SAVE BEST MODEL
+    # STEP 5: SAVE BEST MODEL
     # --------------------------------
 
     if best_model_pipeline is None:
 
-        raise RuntimeError("Best model was not trained.")
+        raise RuntimeError(
+            "Selected best model was not trained."
+        )
 
     Path(MODEL_FILE).parent.mkdir(
         parents=True,
@@ -498,7 +341,7 @@ def main():
     print("\nBest model saved:", MODEL_FILE)
 
     # --------------------------------
-    # STEP 10: SAVE COMPARISON
+    # STEP 6: SAVE MODEL COMPARISON
     # --------------------------------
 
     comparison_df = pd.DataFrame(
@@ -507,35 +350,47 @@ def main():
 
     comparison_df.index.name = "Model"
 
+    Path(COMPARISON_FILE).parent.mkdir(
+        parents=True,
+        exist_ok=True
+    )
+
     comparison_df.to_csv(
         COMPARISON_FILE
     )
 
     # --------------------------------
-    # STEP 11: SAVE METRICS
+    # STEP 7: SAVE METRICS
     # --------------------------------
 
     metrics_data = {
 
         "best_model": best_model_name,
 
-        "best_model_settings": best_settings[best_model_name],
+        "best_model_settings": models[best_model_name][0],
 
-        "selection_metric": "validation_pr_auc",
+        "selection_basis": (
+            "Previously completed validation experiments"
+        ),
 
-        "validation_sample_size": len(X_validation_eval),
+        "previous_best_validation_pr_auc": 0.0232,
 
         "evaluation_sample_size": len(X_test_eval),
 
-        "best_settings": best_settings,
-
-        "validation_metrics": validation_metrics,
+        "best_settings": {
+            name: settings
+            for name, (settings, classifier) in models.items()
+        },
 
         "test_metrics": final_test_results,
 
         "metrics": final_test_results
-
     }
+
+    Path(METRICS_FILE).parent.mkdir(
+        parents=True,
+        exist_ok=True
+    )
 
     with open(METRICS_FILE, "w") as file:
 
@@ -546,7 +401,7 @@ def main():
         )
 
     # --------------------------------
-    # STEP 12: SAVE PREDICTIONS
+    # STEP 8: SAVE BEST MODEL PREDICTIONS
     # --------------------------------
 
     prediction_df = pd.DataFrame({
@@ -559,43 +414,49 @@ def main():
 
     })
 
+    Path(PREDICTIONS_FILE).parent.mkdir(
+        parents=True,
+        exist_ok=True
+    )
+
     prediction_df.to_csv(
         PREDICTIONS_FILE,
         index=False
     )
 
     # --------------------------------
-    # STEP 13: FINAL SUMMARY
+    # STEP 9: FINAL SUMMARY
     # --------------------------------
 
     print("\n" + "=" * 65)
 
-    print("SECOND EXPERIMENT COMPLETED")
+    print("FINAL MODEL TRAINING COMPLETED")
 
     print("=" * 65)
 
-    print("\nBest model:", best_model_name)
+    print("\nSelected best model:", best_model_name)
 
-    print("Best settings:", best_settings[best_model_name])
+    print("Selected settings:", models[best_model_name][0])
 
-    print("\nFinal test comparison:")
+    print("\nFinal model comparison:")
 
     print(comparison_df.round(4))
 
     print("\nGenerated files:")
 
-    print("1.", experiment_file)
+    print("1. Model:", MODEL_FILE)
 
-    print("2.", COMPARISON_FILE)
+    print("2. Metrics:", METRICS_FILE)
 
-    print("3.", METRICS_FILE)
+    print("3. Comparison:", COMPARISON_FILE)
 
-    print("4.", MODEL_FILE)
+    print("4. Predictions:", PREDICTIONS_FILE)
 
-    print("5.", PREDICTIONS_FILE)
 
+# ----------------------------------------
+# PROGRAM ENTRY POINT
+# ----------------------------------------
 
 if __name__ == "__main__":
 
     main()
-    
