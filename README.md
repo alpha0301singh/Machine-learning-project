@@ -57,7 +57,7 @@ The target variable `is_fraud` indicates whether a transaction is fraudulent:
 Six Machine Learning algorithms were implemented and compared:
 
 1. Logistic Regression
-2. K-Nearest Neighbors (KNN)
+2. K-Nearest Neighbors 
 3. Decision Tree
 4. Random Forest
 5. Support Vector Machine (SVM)
