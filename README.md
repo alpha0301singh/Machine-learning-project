@@ -10,7 +10,7 @@ The main objective is to understand how Machine Learning can help identify suspi
 
 ##  Objectives
 
-- Analyze banking transaction data using Exploratory Data Analysis (EDA).
+- Analyze banking transaction data using Exploratory Data Analysis .
 - Perform data preprocessing and feature engineering.
 - Implement multiple Machine Learning classification algorithms.
 - Compare model performance using different evaluation metrics.
