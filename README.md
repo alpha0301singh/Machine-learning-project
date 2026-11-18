@@ -8,7 +8,7 @@ The project uses transaction data and multiple Machine Learning algorithms to cl
 
 The main objective is to understand how Machine Learning can help identify suspicious transactions, especially when fraudulent transactions represent a very small portion of the dataset.
 
-##  Objectives
+##  Objectives :-
 
 - Analyze banking transaction data using Exploratory Data Analysis .
 - Perform data preprocessing and feature engineering.
